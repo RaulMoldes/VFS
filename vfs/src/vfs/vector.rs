@@ -1,10 +1,7 @@
-#![feature(portable_simd)]
-
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::Utc;
 use core::simd::Simd;
-use std::mem;
 
 
 // Metadatos del vector

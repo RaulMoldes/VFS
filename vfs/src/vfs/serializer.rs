@@ -1,13 +1,17 @@
 use std::fs::{OpenOptions, File};
 use std::io::{self,Write, Read, Seek, SeekFrom};
-use std::mem;
+use std::option::Option;
 use bincode;
-use serde::de::DeserializeOwned;
 use super::vector::Vector;
 
 
-const INT_SIZE:u8 = std::mem::size_of::<usize>();
-const START_MARKER:[u8,4] = [0xDE, 0xAD, 0xBE, 0xEF];
+const fn usize_size() -> usize {
+    std::mem::size_of::<usize>()
+}
+
+const INT_SIZE: usize = usize_size();
+const START_MARKER: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+
 
 
 // Función para serializar un vector y guardarlo en el archivo que viene dado por path.
@@ -30,13 +34,7 @@ pub fn save_vector(entry: &Vector, path: &str) -> std::io::Result<()> {
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("Error abriendo el archivo '{}': {}", path, e);
-                return Err(e);
-            }
-        };
+        .open(path)?;
     
 
     // Escribir la marca de inicio
@@ -78,63 +76,60 @@ pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option
     let marker_len = START_MARKER.len();
     let mut buffer = vec![0; buffer_size]; // Tamaño del buffer (ajustable según sea necesario)
 
-    while entries.len() < count {
-        // Leer un bloque del archivo
-        let bytes_read = file.read(&mut buffer)?;
-        println!("Bytes a leer: {}", &bytes_read);
 
-        if bytes_read == 0 {
-            break; // Fin del archivo
-        }
+    // Leer un bloque del archivo
+    let bytes_read = file.read(&mut buffer)?;
+    println!("Bytes a leer: {}", &bytes_read);
 
-        let mut cursor = 0; // Cursor para avanzar en el archivo.
-        while cursor + marker_len <= bytes_read { // Para de leer cuando el buffer esta lleno
-            // Buscar la marca de inicio en el buffer
-            if &buffer[cursor..cursor + marker_len] == start_marker { 
-                // Si el primer elemento coincide con la marca de inicio del vector, leer.
-                // Saltar la marca de inicio
-                println!("Marca de inicio de vector encontrada!");
-                cursor += marker_len;
+    if bytes_read == 0 {
+        return Ok((Vec::new(), current_offset));// Fin del archivo
+    }
 
-                // Leer el tamaño del vector
-                if cursor + INT_SIZE <= bytes_read {
+    let mut cursor = 0; // Cursor para avanzar en el archivo.
+    while cursor + marker_len <= bytes_read &&  entries.len() <= count { 
+        // Para de leer cuando el buffer esta lleno
+        // Buscar la marca de inicio en el buffer
+        if &buffer[cursor..cursor + marker_len] == START_MARKER { 
+            // Si el primer elemento coincide con la marca de inicio del vector, leer.
+            // Saltar la marca de inicio
+            println!("Marca de inicio de vector encontrada!");
+            cursor += marker_len;
+
+            // Leer el tamaño del vector
+            if cursor + INT_SIZE <= bytes_read {
                     
-                    let size_slice = &buffer[cursor..cursor + INT_SIZE;
-                    let vector_size = usize::from_le_bytes(size_slice.try_into().unwrap());
-                    cursor += INT_SIZE;
-                    println!("Tamaño del vector: {}", vector_size);
+                let size_slice = &buffer[cursor..cursor + INT_SIZE];
+                let vector_size = usize::from_le_bytes(size_slice.try_into().unwrap());
+                cursor += INT_SIZE;
+                println!("Tamaño del vector: {}", vector_size);
 
-                    // Verificar que hay suficientes bytes para leer el vector completo
-                    if cursor + vector_size <= bytes_read {
-                        println!("Hay suficientes bytes para leer el vector en el buffer");
-                        let vector_slice = &buffer[cursor..cursor + vector_size];
-                        match bincode::deserialize::<Vector>(vector_slice) {
-                            Ok(entry) => {
-                                entries.push(entry);
-                                if entries.len() >= count {
-                                    break;
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Error de deserialización: {:?}", e);
-                                break;
-                            },
-                        }
-                        cursor += vector_size;
-                    } else {
-                        eprintln!("No hay suficientes bytes para leer el vector");
-                        break;
+                // Verificar que hay suficientes bytes para leer el vector completo
+                if cursor + vector_size <= bytes_read {
+                    println!("Hay suficientes bytes para leer el vector en el buffer");
+                    let vector_slice = &buffer[cursor..cursor + vector_size];
+                    match bincode::deserialize::<Vector>(vector_slice) {
+                        Ok(entry) => {
+                            entries.push(entry);
+                           
+                        },
+                        Err(e) => {
+                            eprintln!("Error de deserialización: {:?}", e);
+                            break;
+                        },
                     }
+                    cursor += vector_size;
                 } else {
-                    eprintln!("No hay suficientes bytes para leer el tamaño del vector");
+                    eprintln!("No hay suficientes bytes para leer el vector");
                     break;
                 }
             } else {
-                cursor += 1; // Avanzar al siguiente byte
+                eprintln!("No hay suficientes bytes para leer el tamaño del vector");
+                break;
             }
+        } else {
+                cursor += 1; // Avanzar al siguiente byte
         }
-        current_offset += bytes_read;
     }
-
+    current_offset += cursor;
     Ok((entries, current_offset))
 }

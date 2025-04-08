@@ -1,12 +1,12 @@
 #![feature(portable_simd)]
+#![allow(dead_code)]
+#![allow(unused)]
 
 mod vfs;
 
 use core::simd::Simd;
-use std::fs::{File, metadata, self};
-use std::io::{self, Write};
+use std::io;
 
-use std::mem;
 use vfs::vector::{Vector, SimdVector};
 use vfs::serializer::{save_vector, load_vectors};
 
@@ -28,9 +28,7 @@ fn main() -> io::Result<()> {
     // Crear el VectorEntry a partir del SimdVector
     let entry3 = Vector::from_simd(simd_vector3, "SIMD 3 Example", vec!["tag1".into()]);
 
-    // Calcular el tamaño en memoria del vector antes de serializarlo
-    let memory_size = entry1.get_mem_size();
-    println!("Tamaño en memoria del vector: {} bytes", memory_size);
+
 
     // Guardar el vector en un archivo
     save_vector(&entry1, "vectors1.bin")?;
@@ -39,7 +37,7 @@ fn main() -> io::Result<()> {
 
     // Ruta del archivo
     let file_path = "vectors1.bin";
-    if let Ok((vectors, offset)) = load_vectors(file_path, 0, 4) {
+    if let Ok((vectors, offset)) = load_vectors(file_path, 0, 4, Some(50 as usize)) {
 
         println!("Offset: {}", offset);
         for vector in vectors {
