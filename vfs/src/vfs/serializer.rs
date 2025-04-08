@@ -114,16 +114,19 @@ pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option
                         },
                         Err(e) => {
                             eprintln!("Error de deserialización: {:?}", e);
+                            cursor = 0;
                             break;
                         },
                     }
                     cursor += vector_size;
                 } else {
                     eprintln!("No hay suficientes bytes para leer el vector");
+                    cursor = 0;
                     break;
                 }
             } else {
                 eprintln!("No hay suficientes bytes para leer el tamaño del vector");
+                cursor = 0;
                 break;
             }
         } else {
