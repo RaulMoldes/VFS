@@ -55,7 +55,13 @@ fn main() -> io::Result<()> {
 
     let output = ranker.search(&query, file_path, 2, Some(1024), Some(1));
 
-    println!("{:?}", output);
+    //println!("{:?}", output);
+
+    for (vector_box, distance) in output.unwrap().iter() {
+        let vector = vector_box.as_ref(); // Obtiene una referencia al Vector dentro del Box
+        println!("Vector: {:?}, Distancia: {}", vector, distance);
+        println!("\n")
+    }
 
     
     Ok(())
