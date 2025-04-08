@@ -7,18 +7,17 @@ mod vfs;
 use core::simd::Simd;
 use std::io;
 
-use vfs::vector::{Vector, SimdVector};
+use vfs::vector::Vector;
 use vfs::serializer::{save_vector, load_vectors};
+use vfs::rank::{Ranker, SearchType};
 
 fn main() -> io::Result<()> {
     // Crear un Simd con un tamaño específico (4 en este caso)
-    let simd = Simd::from_array([1.0, 2.0, 3.0, 4.0]);
-    let simd2 = Simd::from_array([1.0, 2.0, 3.0, 4.0]);
-    let simd3 = Simd::from_array([1.0, 2.0, 3.0, 4.0]);
+    let simd_vector = Simd::from_array([1.0, 2.0, 3.0, 4.0]);
+    let simd_vector2 = Simd::from_array([1.0, 2.0, 4.0, 4.0]);
+    let simd_vector3 = Simd::from_array([1.0, 2.0, 2.0, 4.0]);
     // Convertirlo a una instancia de SimdVector::Vec4
-    let simd_vector = SimdVector::Vec4(simd);
-    let simd_vector2 = SimdVector::Vec4(simd2);
-    let simd_vector3 = SimdVector::Vec4(simd3);
+
     // Crear el VectorEntry a partir del SimdVector
     let entry1 = Vector::from_simd(simd_vector, "SIMD Example", vec!["tag1".into()]);
 
@@ -46,5 +45,18 @@ fn main() -> io::Result<()> {
         }
     }
 
+
+    
+    println!("Probando búsqueda exacta.....");
+    let simd_vector4 = Simd::from_array([1.1, 2.1, 2.1, 4.1]);
+    let query = Vector::from_simd(simd_vector4, "SIMD 4 Example", vec!["tag1".into()]);
+
+    let ranker = Ranker::new(SearchType::Exact);
+
+    let output = ranker.search(&query, file_path, 2, Some(1024), Some(1));
+
+    println!("{:?}", output);
+
+    
     Ok(())
 }
