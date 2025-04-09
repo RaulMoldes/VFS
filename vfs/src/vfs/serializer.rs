@@ -2,7 +2,7 @@ use std::fs::{OpenOptions, File};
 use std::io::{self,Write, Read, Seek, SeekFrom};
 use std::option::Option;
 use bincode;
-use super::vector::Vector;
+use super::vector::{Vector, VFSVector, QuantizedVector};
 
 
 const fn usize_size() -> usize {
@@ -17,7 +17,7 @@ const START_MARKER: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
 // Función para serializar un vector y guardarlo en el archivo que viene dado por path.
 // El vector se guarda con un marcador de inicio `START_MARKER`, lo que permite identificar si vamos a leer un vector o no.
 // Se guarda también el tamaño del vector para poder avanzar el offset al deserializar.
-pub fn save_vector(entry: &Vector, path: &str) -> std::io::Result<()> {
+pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
     let bytes = match bincode::serialize(entry){
         Ok(b) => b,
         Err(e) => {
@@ -62,7 +62,7 @@ pub fn save_vector(entry: &Vector, path: &str) -> std::io::Result<()> {
 // Sirve para cargar el buffer con los vectores que nos interesan.
 // count es el número de vectores a cargar.
 // offset es la posición en el archivo donde empezamos a leer.
-pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option<usize>) -> io::Result<(Vec<Vector>, usize)> {
+pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option<usize>) -> io::Result<(Vec<VFSVector>, usize)> {
     // Abrir el archivo en modo lectura
     let mut file = File::open(path)?;
     let mut entries = Vec::with_capacity(count);
@@ -107,7 +107,8 @@ pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option
                 if cursor + vector_size <= bytes_read {
                     println!("Hay suficientes bytes para leer el vector en el buffer");
                     let vector_slice = &buffer[cursor..cursor + vector_size];
-                    match bincode::deserialize::<Vector>(vector_slice) {
+                
+                    match bincode::deserialize::<VFSVector>(vector_slice) {
                         Ok(entry) => {
                             entries.push(entry);
                            
