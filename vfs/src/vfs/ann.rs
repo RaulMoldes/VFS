@@ -104,7 +104,7 @@ impl HNSW {
                         let mut distances = Vec::new();
                         for neigh_id in &neighbor.neighbors {
                             if let Some(neigh_node) = self.layers[layer_idx].get(neigh_id) {
-                                let distance = self.distance(&neigh_node.vector, &neighbor.vector);
+                                let distance = (&neigh_node.vector, &neighbor.vector);
                                 distances.push((*neigh_id, distance));
                             }
                         }
@@ -121,7 +121,7 @@ impl HNSW {
         // Actualizar los puntos de entrada si es necesario
         for (i, layer) in self.layers.iter().enumerate() {
             if layer.contains_key(&id) && i < self.entry_points.len() {
-                self.entry_points[i] = id;
+                self.entry_points[i] = id; // aqui da un error porque se usa self como mutable pero ya esta tomado como inmutable.
             }
         }
     }
@@ -161,7 +161,7 @@ impl HNSW {
         // Mientras haya candidatos por explorar
         while let Some(std::cmp::Reverse((_, candidate_id))) = candidates.pop() {
             let candidate_node = layer.get(&candidate_id).unwrap();
-            let candidate_distance = self.distance(query, &candidate_node.vector);
+            let candidate_distance = (self.distance_fn)(query, &candidate_node.vector);
             
             // Si el candidato es más lejano que el ef-ésimo resultado actual, terminamos
             if !results.is_empty() && candidate_distance > results.last().unwrap().1 && results.len() >= ef {

@@ -51,7 +51,7 @@ fn main() -> io::Result<()> {
     let simd_vector4 = Simd::from_array([1.1, 2.1, 2.1, 4.1]);
     let query = VFSVector::from_simd(simd_vector4, "SIMD 4 Example", vec!["tag1".into()], false, None);
 
-    let ranker = Ranker::new(SearchType::Exact, DistanceMethod::SimdCosine);
+    let ranker = Ranker::new(SearchType::Approximate, DistanceMethod::Cosine);
 
     let output = ranker.search(&query, file_path, 2, Some(1024), Some(1));
 
