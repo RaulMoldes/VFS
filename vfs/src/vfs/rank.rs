@@ -6,6 +6,7 @@ use std::io;
 use std::simd::num::SimdFloat;
 use super::ann::VFSANNIndex;
 
+
 // macro para calcular la distancia euclidea simd.
 macro_rules! dynamic_simd_euclidean {
     ($vec1:expr, $vec2:expr, [$( $lanes:literal ),*]) => {{
@@ -104,7 +105,7 @@ impl Ranker {
     }
 
     
-    /// Implementación de la búsqueda exacta.
+    /// Implementación de la búsqueda exacta por lotes
     /// La búsqueda exacta requiere cargar todos los vectores en memoria en algún momento.
     /// Usamos `load_vectors` para ir cargando los vectores en un buffer en memoria y luego los liberamos a medida que avanzamos.
     /// 
@@ -178,8 +179,132 @@ impl Ranker {
        
     ) -> io::Result<Vec<(Box<VFSVector>, f32)>> {
         // Implementación de la lógica para búsqueda aproximada.
-        // Esto podría incluir el uso de estructuras de datos especializadas como árboles de búsqueda o hashes.
-        unimplemented!("Búsqueda aproximada aún no implementada.");
+        let limit = result_limit.unwrap_or(5);
+        
+        // Determinar la dimensión a partir del vector de consulta
+        let dim = query.as_f32_vec().len();
+
+        // Crear la función de distancia según el método de distancia configurado
+        let distance_fn: Box<dyn Fn(&Vec<f32>, &Vec<f32>) -> f32> = match self.distance_method {
+            DistanceMethod::Euclidean => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+                v1.iter()
+                    .zip(v2.iter())
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f32>()
+                    .sqrt()
+            }),
+            DistanceMethod::Cosine => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+                let dot: f32 = v1.iter()
+                    .zip(v2.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                
+                let norm_1: f32 = v1.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                let norm_2: f32 = v2.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                
+                1.0 - (dot / (norm_1 * norm_2))
+            }),
+            DistanceMethod::SimdEuclidean => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+                // En este caso, no podemos usar directamente la macro SIMD
+                // porque estamos en un closure, así que usamos la versión no-SIMD
+                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia euclídea.")
+                v1.iter()
+                    .zip(v2.iter())
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f32>()
+                    .sqrt()
+            }),
+            DistanceMethod::SimdCosine => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+                // Aquí también usamos la versión no-SIMD por la misma razón
+    
+                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia coseno.")
+                let dot: f32 = v1.iter()
+                    .zip(v2.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                
+                let norm_1: f32 = v1.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                let norm_2: f32 = v2.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
+                
+                1.0 - (dot / (norm_1 * norm_2))
+            }),
+        };
+    
+
+        // Paso 1: Cargar todos los vectores en memoria  por lotes para construir el índice
+        
+        let mut offset = 0;
+        let mut n = 0;
+
+        // Paso 2: Construir el índice HNSW
+        // Determinar la dimensión de los vectores basado en el primer vector
+        let dim = all_vectors[0].as_f32_vec().len();
+        let m = 16;  // Número máximo de conexiones por nodo
+        let ef_construction = 200;  // Parámetro de construcción
+    
+        // Estimación inicial del número máximo de elementos (se puede ajustar dinámicamente)
+        let initial_max_elements = 1000;
+
+        loop {
+            let (vectors, new_offset) = load_vectors(path, offset, num_vectors_per_iteration, buffer_size)?;
+            if vectors.is_empty() {
+                break;
+            }
+            // Crear el índice HNSW para este chunl de vectores.
+            let mut ann_index = VFSANNIndex::new(dim, initial_max_elements, m, ef_construction, distance_fn);
+
+            // Hash table para almacenar el mapeo id -> vector
+            let mut id_to_vector: HashMap<uuid::Uuid, Box<VFSVector>> = HashMap::new();
+
+            // Indexar los vectores de este lote
+            for vector in vectors {
+                let id = vector.id();
+                ann_index.insert(&vector);
+                id_to_vector.insert(id, Box::new(vector));
+                n += 1;
+            }
+            println!("Cargados {} vectores en índice HNSW ", n);          
+
+            // Paso 3: Realizar la búsqueda aproximada
+            let ann_results = ann_index.search(query, limit);
+            // Paso 4: Convertir los resultados al formato esperado
+            let mut results = Vec::with_capacity(ann_results.len());
+
+            for (uuid, distance) in ann_results {
+                if let Some(vector) = id_to_vector.get(&uuid) {
+                    results.push((vector.clone(), distance));
+                }
+            }
+            
+            // Ordenar resultados por distancia en orden ascendente
+            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Limitar a la cantidad de resultados solicitados
+            if results.len() > limit {
+                results.truncate(limit);
+            }
+            
+            offset = new_offset;
+            
+        }
+
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Ordenar resultados por distancia en orden ascendente
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Limitar a la cantidad de resultados solicitados
+        if results.len() > limit {
+            results.truncate(limit);
+        }
+        
+    
+        println!("Búsqueda aproximada completada: encontrados {} resultados", results.len());
+
+        Ok(results)
+
     }
 
     /// Método para calcular la distancia entre dos vectores.
