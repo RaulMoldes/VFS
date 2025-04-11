@@ -125,6 +125,7 @@ use core::{
 use std::collections::HashSet;
 use super::vector::VFSVector;
 use rand_core::{RngCore, SeedableRng};
+use uuid::Uuid;
 // Enum que representa los dos tipos de capa (Zero y NonZero)
 pub enum Layer<T> {
     Zero,
@@ -134,7 +135,8 @@ pub enum Layer<T> {
 // Struct que representa el vecino de un nodo.
 #[derive(Copy, Clone, Debug)]
 struct Neighbor {
-    index: usize,
+  
+    index: usize, // Índice del nodo en el grafo
     distance: f32, // En mi implementación todas las distancias son f32.
 }
 
@@ -257,12 +259,13 @@ where
     }
 
 
-    fn initialize_searcher(&self, q: &T, searcher: &mut Searcher) {
+    fn initialize_searcher(&self, q: &T, qid: Uuid, searcher: &mut Searcher) {
         // Clear the searcher.
         searcher.clear();
         // Calculamos la distancia al punto de entrada.
         let entry_distance = (self.distance_fn)(q, self.entry_feature());
         let candidate = Neighbor {
+            vid: qid,
             index: 0,
             distance: entry_distance,
         };
@@ -348,7 +351,7 @@ where
     ) {
 
         // Vamos sacando vecinos de la cola de candidatos.
-        while let Some(Neighbor { index, .. }) = searcher.candidates.pop() {
+        while let Some(Neighbor { vid, index, .. }) = searcher.candidates.pop() {
             for neighbor in match layer {
                 Layer::NonZero(layer) => layer[index as usize].get_neighbors(), // Si es no-cero buscamos en capa no-cero
                 Layer::Zero => self.zero[index as usize].get_neighbors(), // Si es cero buscamos en capa cero.
