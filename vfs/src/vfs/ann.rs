@@ -117,7 +117,7 @@ Se empieza por la capa más alta, y se busca el mínimo local. Después se baja 
 
 La condición de parada para la inserción es alcanzar un mínimo local en la capa 0.
 */
-
+// Mi implementación de HNSW sólo funciona para medidas de distancia f32, aquí se muestra una implementación más genérica: https://github.com/rust-cv/hnsw
 use std::collections::HashMap;
 use rand::Rng;
 use uuid::Uuid;
