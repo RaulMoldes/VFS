@@ -1,3 +1,123 @@
+// He estado investigando sobre los algoritmos de búsqueda vectorial aproximada.
+// La principal fuente de información que he utilizado es la siguiente: https://www.pinecone.io/learn/series/faiss/hnsw/
+
+/*
+-----------------------------------------------------------------------------------------------------------------------------
+######  HNSW  #####
+-----------------------------------------------------------------------------------------------------------------------------
+Los algoritmos de búsqueda aproximada de vecinos (ANN) se pueden clasificar en tres categorías: árboles, hashes y grafos. 
+
+HNSW pertenece a la categoría de grafos, específicamente a los grafos de proximidad, donde los nodos (vértices) se conectan según su cercanía, generalmente medida con la distancia euclidiana.
+
+HNSW representa una evolución significativa respecto a los grafos de proximidad básicos, convirtiéndose en un grafo jerárquico navegable de pequeño mundo. Su funcionamiento se basa principalmente en dos técnicas clave:
+
+Listas probabilísticas con salto (skip lists).
+
+Grafos navegables de pequeño mundo (navigable small world graphs).
+
+---------------------------------------------------------------------------------------------------------------------------
+######   Lista Skip Probabilística (Probability Skip List)  #######
+
+La lista skip probabilística fue introducida en 1990 por William Pugh. Esta estructura permite realizar búsquedas rápidas como en un arreglo ordenado, pero con la ventaja de usar listas enlazadas, lo que facilita y agiliza la inserción de nuevos elementos (algo complicado en arreglos ordenados).
+
+La idea de las skip lists es construir varios niveles de listas enlazadas.
+
+En el nivel superior, los enlaces saltan muchos nodos intermedios.
+
+A medida que descendemos de nivel, estos "saltos" se reducen, enlazando nodos más cercanos.
+
+Para buscar en una skip list:
+
+Se comienza en el nivel más alto, donde los saltos son más largos.
+
+Se avanza hacia la derecha mientras el valor del nodo actual sea menor al que buscamos.
+
+Si se pasa del valor objetivo, se baja un nivel y se continúa la búsqueda desde el nodo anterior.
+
+Esta estructura es clave para lograr búsquedas rápidas y eficientes en estructuras como HNSW.
+
+ESTRUCTURA:
+
+|-| ----------------------> |-|---------> |-|  NIVEL 3
+|-| --------> |-| --------> |-|---------> |-|  NIVEL 2
+|-| -> |-| -> |-| -> |-| -> |-| -> |-| -> |-|  NIVEL 1
+-------------------------------------------------------------------------------------------------------------------------
+###### Grafos de Pequeño Mundo Navegables (Navigable Small World Graphs - NSW) ######
+
+La búsqueda vectorial usando grafos de pequeño mundo navegables fue desarrollada en una serie de trabajos entre 2011 y 2014. La idea principal es que, si se construye un grafo de proximidad que combine enlaces de corto y largo alcance, se puede reducir el tiempo de búsqueda a una complejidad logarítmica o polilogarítmica.
+
+En este tipo de grafo:
+
+* Cada nodo (vértice) se conecta con varios otros nodos, llamados "amigos".
+
+* Cada nodo mantiene una lista de amigos, formando así la estructura del grafo.
+
+-> Para realizar una búsqueda (search):
+
+1. Se comienza desde un punto de entrada predefinido.
+
+2. Este punto está conectado a varios nodos cercanos.
+
+3. Se identifica cuál de estos nodos es el más cercano al vector de consulta, y se avanza hacia él.
+
+4. Este proceso se repite hasta encontrar el nodo más próximo al objetivo, aprovechando los enlaces de diferentes alcances para acelerar la búsqueda.
+
+5. La condición de parada es que no haya nodos vecinos más cercanos en la lista de amigos de un nodo en particular.
+----------------------------------------------------------------------------------------------------------------------
+###### Grafos Jerárquicos de Pequeño Mundo Navegables (Hierarchical Navigable Small World Graphs - HNSW) ######
+
+HNSW (Hierarchical Navigable Small World) es una evolución natural de los grafos NSW, que incorpora ideas de la estructura jerárquica de múltiples capas inspiradas en las listas skip probabilísticas de Pugh.
+
+- En HNSW, los enlaces del grafo se distribuyen en diferentes niveles jerárquicos:
+
+- En las capas superiores están los enlaces más largos (mayor alcance).
+
+- En las capas inferiores, los enlaces son más cortos (conexiones locales).
+
+1. ###### Construcción del Grafo ######
+
+- La construcción del grafo se hace insertando vectores uno por uno.
+
+- El número de capas jerárquicas se controla con un parámetro L.
+
+- La probabilidad de que un vector se inserte en una capa dada se define mediante una función de probabilidad P(L, M_L), normalizada por un multiplicador de nivel (m_L)
+​   Si m_L == 0, los vectores se insertan sólo en la capa 0.
+   La regla práctica para optimizar m_L es usar m_L = 1/ln(M), donde M es el número esperado de vecinos por nodo.
+   Un m_L bajo reduce el solapamiento entre nodos en cada capa, pero aumenta el número de pasos durante la búsqueda
+
+2. ##### Inserción ######
+
+FASE 1
+
+- La construcción comienza desde la capa superior.
+
+- El algoritmo navega de forma voraz por los bordes del grafo para encontrar el vecino más cercano al nuevo vector (q) con ef=1.
+
+- Una vez encontrado un mínimo local, el algoritmo baja una capa y repite el proceso hasta llegar a la capa de inserción elegida.
+
+FASE 2
+
+- Al llegar a la capa de inserción, el valor ef se incrementa según el factor efConstruction (definido por el usuario).
+
+- Se buscan los M vecinos más cercanos al nuevo vector para formar los enlaces hacia q.
+
+
+Parámetros Adicionales
+
+- M_max: número máximo de enlaces por nodo.
+
+- M_max0: número máximo de enlaces en la capa 0.
+
+
+3. ##### BÚSQUEDA #####
+
+El proceso de búsqueda es similar a una combinacion de las listas probabilísticas enlazadas con salto junto a los NSW.
+
+Se empieza por la capa más alta, y se busca el mínimo local. Después se baja una capa y se busca de nuevo el mínimo local hasta llegar a la capa 0.
+
+La condición de parada para la inserción es alcanzar un mínimo local en la capa 0.
+*/
+
 use std::collections::HashMap;
 use rand::Rng;
 use uuid::Uuid;
