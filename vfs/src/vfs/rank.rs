@@ -5,6 +5,8 @@ use super::vector::VFSVector;
 use std::io;
 use std::simd::num::SimdFloat;
 use super::ann::VFSANNIndex;
+use std::collections::HashMap;
+use rand::rngs::SmallRng;
 
 
 // macro para calcular la distancia euclidea simd.
@@ -207,7 +209,7 @@ impl Ranker {
             DistanceMethod::SimdEuclidean => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
                 // En este caso, no podemos usar directamente la macro SIMD
                 // porque estamos en un closure, así que usamos la versión no-SIMD
-                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia euclídea.")
+                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia euclídea.");
                 v1.iter()
                     .zip(v2.iter())
                     .map(|(a, b)| (a - b).powi(2))
@@ -217,7 +219,7 @@ impl Ranker {
             DistanceMethod::SimdCosine => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
                 // Aquí también usamos la versión no-SIMD por la misma razón
     
-                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia coseno.")
+                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia coseno.");
                 let dot: f32 = v1.iter()
                     .zip(v2.iter())
                     .map(|(a, b)| a * b)
@@ -237,21 +239,13 @@ impl Ranker {
         let mut n = 0;
 
         // Paso 2: Construir el índice HNSW
-        // Determinar la dimensión de los vectores basado en el primer vector
-        let dim = all_vectors[0].as_f32_vec().len();
-        let m = 16;  // Número máximo de conexiones por nodo
-        let ef_construction = 200;  // Parámetro de construcción
-    
-        // Estimación inicial del número máximo de elementos (se puede ajustar dinámicamente)
-        let initial_max_elements = 1000;
-
-        loop {
+            loop {
             let (vectors, new_offset) = load_vectors(path, offset, num_vectors_per_iteration, buffer_size)?;
             if vectors.is_empty() {
                 break;
             }
             // Crear el índice HNSW para este chunl de vectores.
-            let mut ann_index = VFSANNIndex::new(dim, initial_max_elements, m, ef_construction, distance_fn);
+            let mut ann_index = VFSANNIndex::<_, SmallRng>::new(distance_fn, Some(ef_construction));
 
             // Hash table para almacenar el mapeo id -> vector
             let mut id_to_vector: HashMap<uuid::Uuid, Box<VFSVector>> = HashMap::new();
@@ -259,17 +253,18 @@ impl Ranker {
             // Indexar los vectores de este lote
             for vector in vectors {
                 let id = vector.id();
-                ann_index.insert(&vector);
+                ann_index.insert_one(vector);
                 id_to_vector.insert(id, Box::new(vector));
                 n += 1;
             }
             println!("Cargados {} vectores en índice HNSW ", n);          
 
             // Paso 3: Realizar la búsqueda aproximada
-            let ann_results = ann_index.search(query, limit);
+            let ann_results = ann_index.query(query);
             // Paso 4: Convertir los resultados al formato esperado
             let mut results = Vec::with_capacity(ann_results.len());
-
+            
+            // TODO: arreglar función query para que devuelva un array con el mapeo uuid - distancia
             for (uuid, distance) in ann_results {
                 if let Some(vector) = id_to_vector.get(&uuid) {
                     results.push((vector.clone(), distance));
@@ -304,7 +299,7 @@ impl Ranker {
         println!("Búsqueda aproximada completada: encontrados {} resultados", results.len());
 
         Ok(results)
-
+        
     }
 
     /// Método para calcular la distancia entre dos vectores.

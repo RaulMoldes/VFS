@@ -117,271 +117,653 @@ Se empieza por la capa más alta, y se busca el mínimo local. Después se baja 
 
 La condición de parada para la inserción es alcanzar un mínimo local en la capa 0.
 */
-// Mi implementación de HNSW sólo funciona para medidas de distancia f32, aquí se muestra una implementación más genérica: https://github.com/rust-cv/hnsw
-use std::collections::HashMap;
-use rand::Rng;
-use uuid::Uuid;
+//  Parte del código fue adaptado de este repositorio: https://github.com/rust-cv/hnsw
+use core::{
+    iter::{Cloned, TakeWhile},
+    slice::Iter,
+};
+use std::collections::HashSet;
 use super::vector::VFSVector;
-
-// Nodo de HNSW que contiene un vector y sus vecinos
-#[derive(Debug, Clone)]
-pub struct Node {
-    pub id: Uuid,
-    pub vector: Vec<f32>,
-    pub neighbors: Vec<Uuid>, // IDs de los vecinos en la capa
+use rand_core::{RngCore, SeedableRng};
+// Enum que representa los dos tipos de capa (Zero y NonZero)
+pub enum Layer<T> {
+    Zero,
+    NonZero(T),
 }
 
-// Implementación de HNSW para f32
-pub struct HNSW {
-    // Mapa de capas: cada capa es un HashMap que asocia Uuid con nodos
-    pub layers: Vec<HashMap<Uuid, Node>>,
-    pub entry_points: Vec<Uuid>,           // Puntos de entrada para cada capa
-    pub M: usize,                         // Número máximo de conexiones en un nodo
-    pub ef_construction: usize,           // Número de candidatos en la construcción
-    pub ef_search: usize,                 // Número de candidatos en la búsqueda
-    pub max_elements: usize,              // Número máximo de elementos
-    pub dim: usize,                       // Dimensionalidad de los vectores
-    pub distance_fn: Box<dyn Fn(&Vec<f32>, &Vec<f32>) -> f32>, // Función de distancia
+// Struct que representa el vecino de un nodo.
+#[derive(Copy, Clone, Debug)]
+struct Neighbor {
+    index: usize,
+    distance: f32, // En mi implementación todas las distancias son f32.
 }
 
-impl HNSW {
-    // Constructor para el índice HNSW con la función de distancia como parámetro
-    pub fn new(dim: usize, max_elements: usize, M: usize, ef_construction: usize, distance_fn: Box<dyn Fn(&Vec<f32>, &Vec<f32>) -> f32>) -> Self {
-        HNSW {
-            layers: vec![HashMap::new()], // Inicializar con una capa base vacía
-            entry_points: Vec::new(),
-            M,
-            ef_construction,
-            ef_search: ef_construction,
-            max_elements,
-            dim,
+
+// Implementación de un buscador de HNSW
+#[derive(Clone, Debug)]
+struct Searcher {
+    candidates: Vec<Neighbor>,
+    nearest: Vec<Neighbor>,
+    seen: HashSet<usize>, // más eficiente
+}
+
+impl Searcher {
+    pub fn new(candidates: Vec<Neighbor>) -> Self {
+        Self {
+            candidates,
+            nearest: Vec::new(),
+            seen: HashSet::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.candidates.clear();
+        self.nearest.clear();
+        self.seen.clear();
+    }
+}
+// Trait para obtener los vecinos de un nodo.
+pub trait HasNeighbors<'a, 'b> {
+    type NeighborIter: Iterator<Item = usize> + 'a;
+
+    fn get_neighbors(&'b self) -> Self::NeighborIter;
+}
+
+
+// Nodo de capa zero
+#[derive(Clone, Debug)]
+pub struct NeighborNodes<const N: usize> {
+    // Vecinos de este nodo
+    pub neighbors: [usize; N],
+}
+
+//
+impl<'a, 'b: 'a, // b' vive al menos tanto como a'
+// N es el número de vecinos.
+const N: usize> HasNeighbors<'a, 'b> for NeighborNodes<N> {
+    /// Define el tipo de iterador que se usa para iterar sobre los vecinos.
+    // Cloned hace que se clonen los valores, de manera que se devuelve usize por valor, no por referencia.
+    // Take While toma elementos siempre que una condición se cumple.
+    type NeighborIter = TakeWhile<Cloned<Iter<'a, usize>>, fn(&usize) -> bool>;
+
+    fn get_neighbors(&'b self) -> Self::NeighborIter {
+        self.neighbors.iter().cloned().take_while(|&n| n != !0) // Para los vecinos de la capa 0, se devuelven los vecinos siempre que n != 0
+    }
+}
+
+
+
+
+/// Un nodo de cualquier otra capa.
+pub struct Node<const N: usize> {
+    /// El nodo de la capa cero al que apunta este nodo.
+    pub zero_node: usize,
+    /// El nodo en la capa siguiente al que este nodo apunta.
+    pub next_node: usize,
+    /// Los vecinos de este nodo.
+    pub neighbors: NeighborNodes<N>,
+}
+
+impl<'a, 'b: 'a, const N: usize> HasNeighbors<'a, 'b> for Node<N> {
+    type NeighborIter = TakeWhile<Cloned<Iter<'a, usize>>, fn(&usize) -> bool>;
+
+    fn get_neighbors(&'b self) -> Self::NeighborIter {
+        self.neighbors.get_neighbors() // Se llama recursivamente a la función get neighbors, hasta llegar a la capa 0.
+
+    }
+}
+
+
+
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------//
+
+// IMPLEMENTACIÓN DE HNSW //
+pub struct Hnsw<F, T, R, const M: usize, const M0: usize> 
+where
+    F: Fn(&T, &T) -> f32,
+{
+    /// Función de distancia entre dos VFSVector:
+    distance_fn: F, // debe ser una función que devuelva float32
+    /// Contiene la capa zero.
+    zero: Vec<NeighborNodes<M0>>,
+    /// Features de la capa zero
+    features: Vec<T>,
+    /// Cada una de las capas no-zero
+    layers: Vec<Vec<Node<M>>>,
+    /// Generador pseudoaleatorio
+    prng: R,
+    /// EfConstruction
+    ef_construction: usize,
+
+
+}
+
+impl<F, T, R, const M: usize, const M0: usize> Hnsw<F, T, R, M, M0>
+where
+    R: RngCore + SeedableRng,
+    F: Fn(&T, &T) -> f32
+{
+    /// Crea un nuevo índice HNSW
+    pub fn new(distance_fn: F, ef_construction: Option<usize>) -> Self {
+        Self {
             distance_fn,
+            zero: vec![],
+            features: vec![],
+            layers: vec![],
+            prng: R::from_seed(R::Seed::default()),
+            ef_construction: ef_construction.unwrap_or(400) // por defecto le pongo 400
         }
     }
-    
-    // Insertar un nodo en el índice
-    pub fn insert(&mut self, id: Uuid, vector: Vec<f32>) {
-        // Generar el número de capas para este nodo
-        let num_layers = self.generate_layer_count();
-        
-        // Asegurarnos de que tenemos suficientes capas
-        while self.layers.len() < num_layers {
-            self.layers.push(HashMap::new());
-            self.entry_points.push(id); // Este nodo será el punto de entrada para la nueva capa
-        }
-        
-        // Crear nodo para ser insertado
-        let node = Node {
-            id,
-            vector: vector.clone(),
-            neighbors: Vec::new(),
+
+
+    fn initialize_searcher(&self, q: &T, searcher: &mut Searcher) {
+        // Clear the searcher.
+        searcher.clear();
+        // Calculamos la distancia al punto de entrada.
+        let entry_distance = (self.distance_fn)(q, self.entry_feature());
+        let candidate = Neighbor {
+            index: 0,
+            distance: entry_distance,
         };
-        
-        // Si es el primer nodo, simplemente lo añadimos a todas las capas
-        if self.layers[0].is_empty() {
-            for layer in self.layers.iter_mut() {
-                layer.insert(id, node.clone());
-            }
-            self.entry_points = vec![id; self.layers.len()];
-            return;
+        searcher.candidates.push(candidate);
+        searcher.nearest.push(candidate);
+        searcher.seen.insert(
+            // Marcamos el primer nodo como visto.
+            self.layers
+                .last()
+                .map(|layer| layer[0].zero_node)
+                .unwrap_or(0),
+        );
+    }
+
+
+    /// Realiza una búsqueda en una sola capa.
+    pub fn search_layer<'a>(
+        &self,
+        q: &T, // Valor buscado
+        ef: usize, // ef
+        level: usize, // nivel. Si nivel == 0, buscamos recursivamente hasta llegar a la ultima capa.
+        searcher: &mut Searcher, // Buscador que guarda el estado de la búsqueda
+        dest: &'a mut [Neighbor], // Output
+    ) -> &'a mut [Neighbor] {
+        // Check por si se pasa un número de capa no-válido.
+        if self.features.is_empty() || level >= self.layers() {
+            return &mut [];
         }
-        
-        // Para cada capa, comenzando desde la más alta donde el nodo debería estar
-        for layer_idx in (0..num_layers).rev() {
-            let mut entry_point = if layer_idx < self.entry_points.len() {
-                self.entry_points[layer_idx]
-            } else if !self.entry_points.is_empty() {
-                *self.entry_points.last().unwrap()
+        // Inicializamos el searcher.
+        self.initialize_searcher(q, searcher);
+        let cap = 1; // Inicializa el parámetro cap. Vale uno en las capas más altas y se cambia a ef en la capa 0.
+        // Cap (capacity) es el tope de elementos cercanos en una capa.
+
+        // Iterar sobre las capas de abajo a arriba
+        for (ix, layer) in self.layers.iter().enumerate().rev() {
+            self.search_single_layer(q, searcher, Layer::NonZero(layer), cap);
+            if ix + 1 == level {
+                let found = core::cmp::min(dest.len(), searcher.nearest.len());
+                dest.copy_from_slice(&searcher.nearest[..found]);
+                return &mut dest[..found];
+            }
+            self.lower_search(layer, searcher);
+        }
+
+        let cap = ef;
+
+        // Buscamos en la última capa
+        self.search_zero_layer(q, searcher, cap);
+
+        let found = core::cmp::min(dest.len(), searcher.nearest.len());
+        dest.copy_from_slice(&searcher.nearest[..found]);
+        &mut dest[..found]
+    }
+
+
+
+    /// Método que realiza la búsqueda.
+
+    //  - `q` es el elemento a buscar (query)
+    //  - `dest` es la capa de destino.
+    /// - `ef` es el tamaño del candidate pool. Puede incrementarse para mayor recall, aunque  reduciría la velocidad.
+    /// - Si `ef` es menor que `dest.len()`, `dest` se llenará con `ef` elementos.
+    ///
+    /// Devuelve un fragmento de los vecinos rellenados.
+    pub fn nearest<'a>(
+        &self,
+        q: &T,
+        ef: usize,
+        searcher: &mut Searcher,
+        dest: &'a mut [Neighbor],
+    ) -> &'a mut [Neighbor] {
+        self.search_layer(q, ef, 0, searcher, dest)
+    }
+
+    /// Encuentra los vecinos más cercanos a `q` en cualquier capa. 
+    // Si Layer es Layer::Zero, busca en la capa cero.
+    fn search_single_layer(
+        &self,
+        q: &T,
+        searcher: &mut Searcher,
+        layer: Layer<&[Node<M>]>,
+        cap: usize,
+    ) {
+
+        // Vamos sacando vecinos de la cola de candidatos.
+        while let Some(Neighbor { index, .. }) = searcher.candidates.pop() {
+            for neighbor in match layer {
+                Layer::NonZero(layer) => layer[index as usize].get_neighbors(), // Si es no-cero buscamos en capa no-cero
+                Layer::Zero => self.zero[index as usize].get_neighbors(), // Si es cero buscamos en capa cero.
+            } {
+                // Para cada vecino:
+                let node_to_visit = match layer {
+                    // Esta parte es para evitar re-visitar nodos, usamos la capa cero,
+                    //  ya que sus nodos son consistentes para todas las capas.
+                    // Si es capa no cero se obtiene el nodo de la capa zero al que apunta
+                    Layer::NonZero(layer) => layer[neighbor as usize].zero_node,
+                    // Si es capa cero se obtiene un vecino
+                    Layer::Zero => neighbor,
+                };
+
+            
+                // TODO:¿Bloom filter?
+                // Hemos visto el nodo?
+                if searcher.seen.insert(node_to_visit) {
+                    // Si no lo hemos visto, calcular la distancia del nodo a q
+                    let distance = (self.distance_fn)(q, &self.features[node_to_visit as usize]);
+
+                    // Intenta insertar en la cola de cercanos.
+                    // Buscar la posicion del primer elemento donde la distancia deja de ser menor o igual a la que acabamos de calcular.
+                    let pos = searcher.nearest.partition_point(|n| n.distance <= distance);
+                    // Usa partitionpoint por eficiencia ya que así evitamos tener que reordenar la lista de cercanos.
+
+                    if pos != cap {
+                        // It was successful. Now we need to know if its full.
+                        if searcher.nearest.len() == cap {
+                            // In this case remove the worst item.
+                            searcher.nearest.pop();
+                        }
+                        // Añadimos el nuevo elemento.
+                        let candidate = Neighbor {
+                            index: neighbor as usize,
+                            distance,
+                        };
+                        // Lo insertamos en la posición deseada.
+                        searcher.nearest.insert(pos, candidate);
+                        // Lo añadimos a la lista de candidatos.
+                        searcher.candidates.push(candidate);
+                    }
+                }
+            }
+        }
+
+    }
+
+     /// Buscar en la capa zero, simplemente ejecutar search_single_layer con los parametros adecuados.
+     fn search_zero_layer(&self, q: &T, searcher: &mut Searcher, cap: usize) {
+        self.search_single_layer(q, searcher, Layer::Zero, cap);
+    }
+
+    /// Inicia la búsqueda para el siguiente nivel.
+    ///
+    /// `m` es el número máximo de vecinos a considerar durante la búsqueda.
+    fn lower_search(&self, layer: &[Node<M>], searcher: &mut Searcher) {
+        // Limpiamos la lista de candidatos para actualizarla.
+        searcher.candidates.clear();
+        // Solo mantenemos  el primer candidato, como indica el paper original.
+        // https://arxiv.org/abs/1603.09320
+        // (Ver algoritmo 5 linea 5)
+        let &Neighbor { index, distance } = searcher.nearest.first().unwrap();
+        searcher.nearest.clear();
+        // Bajamos al nodo de la siguiente capa.
+        let new_index = layer[index].next_node as usize;
+        let candidate = Neighbor {
+            index: new_index,
+            distance,
+        };
+        // Guardamos el nodo más cercano en la lista de cercanos y de candidatos
+        searcher.nearest.push(candidate);
+        searcher.candidates.push(candidate);
+    }
+
+    /// Inserta una nueva característica en HNSW.
+    pub fn insert(&mut self, q: T, searcher: &mut Searcher) -> usize {
+        // Obtener el nivel de la característica.
+        let level = self.random_level();
+        // Si el nivel no es el más alto, cap = ef_construction
+        let mut cap = if level >= self.layers.len() {
+            self.ef_construction
+        } else {
+            1
+        };
+
+        // Si el índice esta vacío lo añadimos manualmente.
+        if self.is_empty() {
+            // Add the zero node unconditionally.
+            self.zero.push(NeighborNodes {
+                neighbors: [!0; M0],
+                // M0 es el número de nodos de la capa 0.
+            });
+            self.features.push(q);
+
+            // Añadir todas las capas donde se encuentra esta feature.
+            while self.layers.len() < level {
+                
+                let node = Node {
+                    zero_node: 0,
+                    next_node: 0,
+                    neighbors: NeighborNodes { neighbors: [!0; M] }, // M es el número de nodos de las capas no cero
+                };
+                self.layers.push(vec![node]);
+            }
+            return 0;
+        }
+
+        // Recargar searcher
+        self.initialize_searcher(&q, searcher);
+
+        // Realizamos una búsqueda aproximada hasta alzanzar el nivel deseado.
+        for ix in (level..self.layers.len()).rev() {
+            // Realizar búsqueda aproximada
+            self.search_single_layer(&q, searcher, Layer::NonZero(&self.layers[ix]), cap);
+            // Bajamos la búsqueda.
+            self.lower_search(&self.layers[ix], searcher);
+            cap = if ix == level {
+                // Cuando alcanzamos el nivel deseado, actualizar cap para matchear ef_construction.
+                self.ef_construction
             } else {
-                // Si no hay puntos de entrada, tomamos uno cualquiera
-                if let Some(id) = self.layers[0].keys().next() {
-                    *id
-                } else {
-                    // Si no hay nodos, este es el primero
-                    self.layers[0].insert(id, node.clone());
-                    self.entry_points = vec![id];
-                    return;
-                }
+                1
             };
-            
-            // Buscar los ef_construction vecinos más cercanos en esta capa
-            let neighbors = self.search_layer(&vector, entry_point, self.ef_construction, layer_idx);
-            
-            // Crear un nuevo nodo con estos vecinos
-            let mut new_node = node.clone();
-            new_node.neighbors = neighbors.into_iter().map(|(id, _)| id).take(self.M).collect();
-            
-            // Añadir el nodo a la capa
-            self.layers[layer_idx].insert(id, new_node);
-            
-            // Para cada vecino, también establecer este nodo como su vecino
-            for neighbor_id in self.layers[layer_idx].get(&id).unwrap().neighbors.clone() {
-                if let Some(neighbor) = self.layers[layer_idx].get_mut(&neighbor_id) {
-                    neighbor.neighbors.push(id);
-                    // Limitar el número de vecinos si excede M
-                    if neighbor.neighbors.len() > self.M {
-                        // Ordenar vecinos por distancia y mantener solo los M más cercanos
-                        let mut distances = Vec::new();
-                        for neigh_id in &neighbor.neighbors {
-                            if let Some(neigh_node) = self.layers[layer_idx].get(neigh_id) {
-                                let distance = (&neigh_node.vector, &neighbor.vector);
-                                distances.push((*neigh_id, distance));
-                            }
-                        }
-                        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                        neighbor.neighbors = distances.into_iter().map(|(id, _)| id).take(self.M).collect();
+        }
+
+        // Nivel alcanzado, conectamos el nodo a sus vecinos, empleanso
+        for ix in (0..core::cmp::min(level, self.layers.len())).rev() {
+            // Buscamos los vecinos de esta capa
+            self.search_single_layer(&q, searcher, Layer::NonZero(&self.layers[ix]), cap);
+            // Usar los resultados de la búsqueda para crear el nodo.
+            self.create_node(&q, &searcher.nearest, ix + 1);
+            // Bajar una capa.
+            self.lower_search(&self.layers[ix], searcher);
+            cap = self.ef_construction;
+        }
+
+        // Conectar el nodo en la capa cero
+        self.search_zero_layer(&q, searcher, cap);
+        self.create_node(&q, &searcher.nearest, 0);
+        // Añadir la feature a la capa cero.
+        self.features.push(q);
+
+        // Añadir todos los vectores necesarios para crear el nivel.
+        let zero_node = self.zero.len() - 1;
+        while self.layers.len() < level {
+            let node = Node {
+                zero_node,
+                next_node: self.layers.last().map(|l| l.len() - 1).unwrap_or(zero_node),
+                neighbors: NeighborNodes { neighbors: [!0; M] },
+            };
+            self.layers.push(vec![node]);
+        }
+        zero_node
+    }
+
+     /// Genera un nivel aleatorio
+     fn random_level(&mut self) -> usize {
+        let uniform: f64 = self.prng.next_u64() as f64 / core::u64::MAX as f64;
+        (-libm::log(uniform) * libm::log(M as f64).recip()) as usize
+    }
+
+
+    // Devuelve el elemento item de  la lista de features.
+    pub fn feature(&self, item: usize) -> &T {
+        &self.features[item as usize]
+    }
+
+    // Obtiene features por capa.
+    pub fn layer_feature(&self, level: usize, item: usize) -> &T {
+        &self.features[self.layer_item_id(level, item) as usize]
+    }
+
+    // Mapea los ids de los elementos de las capas más altas a la capa cero.
+    pub fn layer_item_id(&self, level: usize, item: usize) -> usize {
+        if level == 0 {
+            item
+        } else {
+            self.layers[level][item as usize].zero_node
+        }
+    }
+
+    // Número de capas.
+    pub fn layers(&self) -> usize {
+        self.layers.len() + 1
+    }
+
+    // Longitud de la capa 0
+    pub fn len(&self) -> usize {
+        self.zero.len()
+    }
+    // Longitud de cualquier capa.
+    pub fn layer_len(&self, level: usize) -> usize {
+        if level == 0 {
+            self.features.len()
+        } else if level < self.layers() {
+            self.layers[level - 1].len()
+        } else {
+            0
+        }
+    }
+
+    // Si la capa cero está vacía, consideramos que el índice está vacío
+    pub fn is_empty(&self) -> bool {
+        self.zero.is_empty()
+    }
+
+
+    pub fn layer_is_empty(&self, level: usize) -> bool {
+        self.layer_len(level) == 0
+    }
+
+  
+
+    /// Obtiene la feature de entrada.
+    fn entry_feature(&self) -> &T {
+        if let Some(last_layer) = self.layers.last() {
+            &self.features[last_layer[0].zero_node as usize]
+        } else {
+            &self.features[0]
+        }
+    }
+
+
+
+    /// Crea un nuevo nodo en un capa dada a partir de sus vecinos.
+    fn create_node(&mut self, q: &T, nearest: &[Neighbor], layer: usize) {
+        if layer == 0 {
+            let new_index = self.zero.len();
+            // Obtener el siguiente índice de la capa cero.
+            let mut neighbors: [usize; M0] = [!0; M0];
+            for (d, s) in neighbors.iter_mut().zip(nearest.iter()) {
+                *d = s.index as usize; // Copiar nearest en neighbors
+            }
+            // Creamos el struct vecinos
+            let node = NeighborNodes { neighbors };
+            for neighbor in node.get_neighbors() {
+
+                self.add_neighbor(q, new_index as usize, neighbor, layer);
+            }// Insertamos sus vecinos con la función `add_neighbor`.
+            // Esta función sirve también para la capa 0.
+
+            // Añadimos el nodo a la capa zero.
+            self.zero.push(node);
+        } else {
+
+            // Equivalente en el resto de capas.
+            let new_index = self.layers[layer - 1].len();
+            let mut neighbors: [usize; M] = [!0; M];
+            for (d, s) in neighbors.iter_mut().zip(nearest.iter()) {
+                *d = s.index;
+            }
+            let node = Node {
+                zero_node: self.zero.len(),
+                next_node: if layer == 1 {
+                    self.zero.len()
+                } else {
+                    self.layers[layer - 2].len()
+                },
+                neighbors: NeighborNodes { neighbors },
+            };
+            for neighbor in node.get_neighbors() {
+                self.add_neighbor(q, new_index, neighbor, layer);
+            }
+            self.layers[layer - 1].push(node);
+        }
+    }
+
+    /// 
+    fn add_neighbor(&mut self, q: &T, node_ix: usize, target_ix: usize, layer: usize) {
+        // Obtenemos la feature y los vecinos del target a partir de su índice.
+        let (target_feature, target_neighbors) = if layer == 0 {
+            (
+                &self.features[target_ix],
+                &self.zero[target_ix].neighbors[..],
+            )
+        } else {
+            // Si no estamos en capa cero hacemos el mapeo a esta, como de costumbre.
+            let target = &self.layers[layer - 1][target_ix];
+            (
+                &self.features[target.zero_node],
+                &target.neighbors.neighbors[..],
+            )
+        };
+
+        // Obtengo el primer índice de la lista de vecinos donde hay un hueco.
+        let empty_point = target_neighbors.partition_point(|&n| n != !0);
+
+        // Si el índice no es la última posición de la lista
+        if empty_point != target_neighbors.len() {
+            // Añadir el vecino en el punto encontrado.
+            if layer == 0 {
+                self.zero[target_ix as usize].neighbors[empty_point] = node_ix;
+            } else {
+                self.layers[layer - 1][target_ix as usize]
+                    .neighbors
+                    .neighbors[empty_point] = node_ix;
+            }
+        } else {
+            // En cualquier otro caso, hay que encontrar el peor vecino
+            let (worst_ix, worst_distance) = target_neighbors
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, &n)| {
+                    // Computar la distancia de manera que sea lo mas alta posible si el vecino no se ha rellenado aun
+                    if n == !0 {
+                        None // usize::MAX  
+                    } else {
+                        // Calcular la peor distancia
+                        let distance = (self.distance_fn)(
+                            target_feature,
+                            &self.features[if layer == 0 {
+                                n
+                            } else {
+                                self.layers[layer - 1][n].zero_node
+                            }],
+                        );
+                        Some((ix, distance))
                     }
+                })
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Greater))
+                .unwrap();
+
+            // Si la distancia mejora la peor distancia, añadimos el nodo en el último lugar
+            if (self.distance_fn)(q, target_feature) < worst_distance {
+                if layer == 0 {
+                    self.zero[target_ix as usize].neighbors[worst_ix] = node_ix;
+                } else {
+                    self.layers[layer - 1][target_ix as usize]
+                        .neighbors
+                        .neighbors[worst_ix] = node_ix;
                 }
             }
-            
-            // Actualizar el punto de entrada para la siguiente capa
-            entry_point = id;
         }
-        
-        // Actualizar los puntos de entrada si es necesario
-        for (i, layer) in self.layers.iter().enumerate() {
-            if layer.contains_key(&id) && i < self.entry_points.len() {
-                self.entry_points[i] = id; // aqui da un error porque se usa self como mutable pero ya esta tomado como inmutable.
-            }
-        }
-    }
-    
-    // Genera una cantidad aleatoria de capas para un nodo
-    fn generate_layer_count(&self) -> usize {
-        let mut rng = rand::thread_rng();
-        let mut layer_count = 1;
-        let level_probability = 1.0 / (self.M as f32).ln();
-
-        while rng.gen::<f32>() < level_probability && layer_count < self.layers.len() + 1 {
-            layer_count += 1;
-        }
-
-        layer_count
-    }
-
-    // Buscar los ef vecinos más cercanos en una capa específica
-    fn search_layer(&self, query: &Vec<f32>, entry_point: Uuid, ef: usize, layer_idx: usize) -> Vec<(Uuid, f32)> {
-        let layer = &self.layers[layer_idx];
-        
-        // Conjunto de candidatos (IDs) que ya hemos visitado
-        let mut visited = std::collections::HashSet::new();
-        visited.insert(entry_point);
-        
-        // Cola de prioridad para los candidatos más cercanos que debemos explorar
-        let mut candidates = std::collections::BinaryHeap::new();
-        
-        // Distancia inicial al punto de entrada
-        let entry_node = layer.get(&entry_point).unwrap();
-        let entry_distance = self.distance(query, &entry_node.vector);
-        candidates.push(std::cmp::Reverse((entry_distance, entry_point)));
-        
-        // Conjunto de resultados hasta ahora (los ef vecinos más cercanos)
-        let mut results = vec![(entry_point, entry_distance)];
-        
-        // Mientras haya candidatos por explorar
-        while let Some(std::cmp::Reverse((_, candidate_id))) = candidates.pop() {
-            let candidate_node = layer.get(&candidate_id).unwrap();
-            let candidate_distance = (self.distance_fn)(query, &candidate_node.vector);
-            
-            // Si el candidato es más lejano que el ef-ésimo resultado actual, terminamos
-            if !results.is_empty() && candidate_distance > results.last().unwrap().1 && results.len() >= ef {
-                break;
-            }
-            
-            // Explorar los vecinos del candidato
-            for neighbor_id in &candidate_node.neighbors {
-                if !visited.contains(neighbor_id) {
-                    visited.insert(*neighbor_id);
-                    
-                    let neighbor_node = layer.get(neighbor_id).unwrap();
-                    let distance = self.distance(query, &neighbor_node.vector);
-                    
-                    // Si tenemos menos de ef resultados o este vecino es más cercano que el más lejano
-                    if results.len() < ef || distance < results.last().unwrap().1 {
-                        candidates.push(std::cmp::Reverse((distance, *neighbor_id)));
-                        results.push((*neighbor_id, distance));
-                        
-                        // Ordenar resultados por distancia (menor primero)
-                        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                        
-                        // Mantener solo los ef resultados más cercanos
-                        if results.len() > ef {
-                            results.pop();
-                        }
-                    }
-                }
-            }
-        }
-        
-        results
-    }
-
-    // Calcular la distancia entre dos vectores utilizando la función de distancia
-    fn distance(&self, v1: &[f32], v2: &[f32]) -> f32 {
-        (self.distance_fn)(v1, v2)
-    }
-
-    // Buscar los k vecinos más cercanos para un vector de consulta
-    pub fn search(&self, query: &Vec<f32>, k: usize) -> Vec<(Uuid, f32)> {
-        if self.layers.is_empty() || self.layers[0].is_empty() {
-            return Vec::new();
-        }
-        
-        let mut entry_point = self.entry_points[0];
-        
-        // Descender por las capas, comenzando desde la más alta
-        for layer_idx in (1..self.layers.len()).rev() {
-            let layer_results = self.search_layer(query, entry_point, 1, layer_idx);
-            if !layer_results.is_empty() {
-                entry_point = layer_results[0].0;
-            }
-        }
-        
-        // Búsqueda final en la capa base (capa 0) con ef_search
-        let results = self.search_layer(query, entry_point, self.ef_search, 0);
-        
-        // Tomar los k vecinos más cercanos
-        results.into_iter().take(k).collect()
     }
 }
 
-pub struct VFSANNIndex {
-    hnsw: HNSW,
-    id_to_index: HashMap<Uuid, usize>, // Mapeamos UUIDs a índices internos
-    index_counter: usize,              // Contador para asignar nuevos índices
+// ------------------------------------------------------------------------------------------------------------
+// Wrapper para poder integrarlo en el proyecto.
+
+
+pub type DefaultHNSW<F,R> = Hnsw<F, Vec<f32>, R, 16, 40>;
+
+// IMPLEMENTACIÓN DE VFSANN//
+pub struct VFSANNIndex<F, R> 
+where
+    F: Fn(&Vec<f32>, &Vec<f32>) -> f32,
+{
+    /// Función de distancia entre dos VFSVector:
+    hnsw: DefaultHNSW<F, R>,
+    searcher: Searcher, 
+
+
 }
 
-impl VFSANNIndex {
-    pub fn new(dim: usize, 
-        max_elements: usize, 
-        M: usize, 
-        ef_construction: usize, 
-        distance_fn: Box<dyn Fn(&Vec<f32>, &Vec<f32>) -> f32>) -> Self {
 
-        let hnsw = HNSW::new(dim, max_elements, M, ef_construction, distance_fn);
-        Self { 
+impl<F,R> VFSANNIndex<F, R> 
+where
+    F: Fn(&Vec<f32>, &Vec<f32>) -> f32,
+    R: RngCore + SeedableRng,
+{
+
+    pub fn new(distance_fn: F, ef_construction: Option<usize>) -> Self {
+
+        let candidates = Vec::new();
+        let searcher = Searcher::new(candidates);
+        let hnsw = DefaultHNSW::new(distance_fn, ef_construction);
+
+        Self {
             hnsw,
-            id_to_index: HashMap::new(),
-            index_counter: 0,
+            searcher
+
         }
     }
 
-    /// Insertar un vector en el índice
-    pub fn insert(&mut self, vector: &VFSVector) {
-        let vec = vector.as_f32_vec();
-        let id = vector.id();
-        
-        // Insertar en el índice HNSW
-        self.hnsw.insert(id, vec);
-        
-        // Registrar el mapeo de UUID a índice
-        self.id_to_index.insert(id, self.index_counter);
-        self.index_counter += 1;
+    pub fn get_searcher(&self) -> Searcher{
+        self.searcher.clone()
     }
 
-    /// Buscar los k vecinos más cercanos
-    pub fn search(&self, query: &VFSVector, k: usize) -> Vec<(Uuid, f32)> {
-        let vec = query.as_f32_vec();
-        self.hnsw.search(&vec, k)
+    pub fn insert_one(&mut self, vfs_vector: VFSVector) -> usize {
+        let vf32 = vfs_vector.as_f32_vec();
+        let mut searcher = self.get_searcher();
+        self.hnsw.insert(vf32, &mut searcher)
+
     }
+
+    pub fn insert_many(&mut self, vec_list: Vec<VFSVector>){
+        for v in vec_list{
+            self.insert_one(v);
+        }
+
+    }
+
+    pub fn query(&mut self, vfs_vector: &VFSVector) -> Vec<Neighbor> {
+        // Inicializar output como un vector mutable
+        let mut output = vec![
+            Neighbor {
+                index: !0,
+                distance: 0.0,
+            };
+            1
+        ];
+    
+        // Convertir el vector a un slice de f32
+        let vf32 = vfs_vector.as_f32_vec();
+    
+        // Inicializar el searcher
+        let mut searcher = self.get_searcher();
+    
+        // Realizar la búsqueda
+        let mut result = self.hnsw.nearest(&vf32, 24, &mut searcher, &mut output);
+
+        output
+    
+       
+    }
+
 }
+
