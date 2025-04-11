@@ -125,7 +125,7 @@ use core::{
 use std::collections::HashSet;
 use super::vector::VFSVector;
 use rand_core::{RngCore, SeedableRng};
-use uuid::Uuid;
+
 // Enum que representa los dos tipos de capa (Zero y NonZero)
 pub enum Layer<T> {
     Zero,
@@ -265,7 +265,7 @@ where
         // Calculamos la distancia al punto de entrada.
         let entry_distance = (self.distance_fn)(q, self.entry_feature());
         let candidate = Neighbor {
-            vid: qid,
+           
             index: 0,
             distance: entry_distance,
         };
