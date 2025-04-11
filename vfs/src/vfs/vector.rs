@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+//use uuid::Uuid;
 use core::simd::Simd;
 use std::simd::{SupportedLaneCount, LaneCount};
 use std::convert::TryInto;
@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 // Metadatos del vector
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VectorMetadata {
+    pub manager_name: String,
     pub name: String,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -16,7 +17,7 @@ pub struct VectorMetadata {
 /// Vector usa Vec<f32> internamente, pero puede construirse desde Simd
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Vector {
-    pub id: Uuid,
+    pub id: u64,
     pub vector: Vec<f32>,
     pub metadata: VectorMetadata,
 }
@@ -25,7 +26,7 @@ pub struct Vector {
 // Permite descuantizarse, devolviendo un `Vector`
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QuantizedVector {
-    pub id: Uuid,
+    pub id: u64,
     pub vector: Vec<i8>,
     pub scale_factor: f32,
     pub metadata: VectorMetadata,
@@ -270,4 +271,41 @@ impl VFSVector {
         }
     }
     
+}
+
+
+// Mantiene información del entorno de VFS
+struct VFSManager {
+    pub name: String,
+    num_vectors: usize,
+    next_id: u64, // Siguiente id a asignar
+
+}
+
+// TODO
+
+impl VFSManager {
+
+    fn new() -> Self {
+        Self {
+            num_vectors: 0,
+            next_id: 1 // Se empieza por el uno para no colisionar con el HNSW
+
+        }
+
+    }
+
+    pub fn next_id(&mut self) -> u64{
+        let aux_id = self.next_id;
+        self.next_id+=1;
+        self.num_vectors+=1;
+        aux_id
+
+    }
+
+    pub fn get_num_vectors(&self) -> usize{
+        self.num_vectors
+
+    }
+
 }
