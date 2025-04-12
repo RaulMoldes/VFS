@@ -42,9 +42,9 @@ pub enum VFSVector {
 
 impl Vector {
     // Constructor vector normal.
-    pub fn from_vec(vector: Vec<f32>, name: &str, tags: Vec<String>) -> Self {
+    pub fn from_vec(vector: Vec<f32>, id: u64, name: &str, tags: Vec<String>) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: id,
             vector,
             metadata: VectorMetadata {
                 name: name.to_string(),
@@ -69,7 +69,7 @@ impl Vector {
     }
 
     // Constructor de vector desde Simd.
-    pub fn from_simd<const N: usize>(simd_vector: Simd<f32, N>, name: &str, tags: Vec<String>) -> Self
+    pub fn from_simd<const N: usize>(simd_vector: Simd<f32, N>, id: u64, name: &str, tags: Vec<String>) -> Self
     where
         LaneCount<N>: SupportedLaneCount, 
         // El compilador no puede inferir la longitud que va a tener el vector SIMD, así que necesitamos predefinir la longitud nosotros.
@@ -77,7 +77,7 @@ impl Vector {
         
     {
         Vector {
-            id: Uuid::new_v4(),
+            id: id,
             vector: simd_vector.to_array().to_vec(),
             metadata: VectorMetadata {
                 name: name.to_string(),
@@ -158,7 +158,7 @@ impl QuantizedVector {
 
 impl VFSVector {
     // Método para obtener ID (común a ambos tipos)
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> u64 {
         match self {
            VFSVector::Dense(v) => v.id,
            VFSVector::Quantized(v) => v.id,
@@ -176,18 +176,18 @@ impl VFSVector {
     
 
     // Constructor a partir de un vector de f32
-    pub fn from_vec(vector: Vec<f32>, name: &str, tags: Vec<String>) -> Self {
-        let vector = Vector::from_vec(vector, name, tags);
+    pub fn from_vec(vector: Vec<f32>, id: u64, name: &str, tags: Vec<String>) -> Self {
+        let vector = Vector::from_vec(vector, id, name, tags);
        VFSVector::Dense(vector)
     }
     
     // Constructor a partir de un vector de i8 (cuantizado)
-    pub fn from_quantized_vec(vector: Vec<i8>, scale_factor: f32, name: &str, tags: Vec<String>) -> Self {
+    pub fn from_quantized_vec(vector: Vec<i8>, id: u64, scale_factor: f32, name: &str, tags: Vec<String>) -> Self {
         let mut tags = tags.clone();
         tags.push("quantized".to_string());
         
         let quantized = QuantizedVector {
-            id: Uuid::new_v4(),
+            id: id,
             vector,
             scale_factor,
             metadata: VectorMetadata {
@@ -228,7 +228,8 @@ impl VFSVector {
 
     // Crear desde Simd - puede crear denso o cuantizado según el parámetro
     pub fn from_simd<const N: usize>(
-        simd_vector: Simd<f32, N>, 
+        simd_vector: Simd<f32, N>,
+        id: u64, 
         name: &str, 
         tags: Vec<String>,
         quantize: bool,
@@ -237,7 +238,7 @@ impl VFSVector {
     where
         LaneCount<N>: SupportedLaneCount,
     {
-        let vector = Vector::from_simd(simd_vector, name, tags);
+        let vector = Vector::from_simd(simd_vector, id, name, tags);
         
         if quantize {
             // Si se solicita cuantización, convertimos directamente aVFSVector::Quantized
@@ -270,42 +271,11 @@ impl VFSVector {
            VFSVector::Quantized(qv) => qv.vector.clone(),
         }
     }
+
+
+    
     
 }
 
 
-// Mantiene información del entorno de VFS
-struct VFSManager {
-    pub name: String,
-    num_vectors: usize,
-    next_id: u64, // Siguiente id a asignar
 
-}
-
-// TODO
-
-impl VFSManager {
-
-    fn new() -> Self {
-        Self {
-            num_vectors: 0,
-            next_id: 1 // Se empieza por el uno para no colisionar con el HNSW
-
-        }
-
-    }
-
-    pub fn next_id(&mut self) -> u64{
-        let aux_id = self.next_id;
-        self.next_id+=1;
-        self.num_vectors+=1;
-        aux_id
-
-    }
-
-    pub fn get_num_vectors(&self) -> usize{
-        self.num_vectors
-
-    }
-
-}
