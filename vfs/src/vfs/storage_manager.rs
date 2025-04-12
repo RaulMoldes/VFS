@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, BufWriter};
 use bincode;
 use super::vector::{VFSVector}; // Asegúrate de importar correctamente
-use super::serialize::{save_vector, load_vectors}; // Tus funciones personalizadas
-
+use super::serializer::{save_vector, load_vectors}; // Tus funciones personalizadas
+use std::simd::{SupportedLaneCount, LaneCount};
+use core::simd::Simd;
 
 const FLUSH_THRESHOLD: usize = 1000;
 const STORAGE_PATH: &str = "data/vectors.dat";
@@ -20,7 +21,7 @@ struct VFSState{
 pub struct VFSManager {
     pub name: String,
     next_id: u64,
-    memtable: HashMap<Uuid, VFSVector>,
+    memtable: HashMap<u64, VFSVector>,
     current_offset: usize,
 }
 
@@ -50,7 +51,7 @@ impl VFSManager {
     }
 
     pub fn flush_manual(&mut self) -> std::io::Result<()> {
-        self.flush_to_disk()
+        self.flush_memtable_to_disk()
     }
 
     pub fn load_batch(&mut self, count: usize) -> std::io::Result<Vec<VFSVector>> {
@@ -68,10 +69,11 @@ impl VFSManager {
     }
 
     fn vector_to_memtable(&self, vector: VFSVector) -> std::io::Result<()>{
+        let id = vector.id();
         self.memtable.insert(id, vfs);
 
         if self.memtable.len() >= FLUSH_THRESHOLD {
-            self.flush_to_disk().expect("Fallo al flushear vectores");
+            self.flush_memtable_to_disk().expect("Fallo al flushear vectores");
         }
 
     }
@@ -82,7 +84,7 @@ impl VFSManager {
             let id = self.next_id();
             let vfs = VFSVector::from_vec(data, id, name, tags);
             self.vector_to_memtable(vfs)?;
-            println!("VFSVector registrado correctamente !!!")
+            println!("VFSVector registrado correctamente !!!");
         
         
         id
@@ -90,7 +92,8 @@ impl VFSManager {
 
     // Registra un vector desde Simd
     pub fn register_vector_from_simd<const N: usize>(
-        simd_vector: Simd<f32, N>,
+        &mut self,
+        data: Simd<f32, N>,
         name: &str, 
         tags: Vec<String>,
         quantize: bool,
@@ -104,7 +107,7 @@ impl VFSManager {
             let id = self.next_id();
             let vfs = VFSVector::from_simd(data, id, name, tags, quantize, scale_factor);
             self.vector_to_memtable(vfs)?;
-            println!("VFSVector registrado correctamente !!!")
+            println!("VFSVector registrado correctamente !!!");
         
        
         id
@@ -127,9 +130,9 @@ impl VFSManager {
             .open(path)?;
 
         file.write_all(&encoded)?;
-        
+
         // Guardar la memtable
-        self.flush_to_disk().expect("Fallo al flushear vectores");
+        self.flush_memtable_to_disk().expect("Fallo al flushear vectores");
 
         Ok(())
     }
