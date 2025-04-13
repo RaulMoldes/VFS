@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 // Metadatos del vector
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VectorMetadata {
-    pub manager_name: String,
+
     pub name: String,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,

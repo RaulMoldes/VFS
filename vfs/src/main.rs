@@ -38,7 +38,7 @@ fn main() -> io::Result<()> {
 
     // Cargar los vectores desde el archivo en disco
     
-    let vectors = restored_manager.load_batch(2);
+    let vectors = restored_manager.load_batch(2).expect("Error al cargar los vectores");
 
     // Mostrar información de los vectores cargados
     for vector in vectors.iter() {

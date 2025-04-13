@@ -18,6 +18,11 @@ const START_MARKER: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
 // El vector se guarda con un marcador de inicio `START_MARKER`, lo que permite identificar si vamos a leer un vector o no.
 // Se guarda también el tamaño del vector para poder avanzar el offset al deserializar.
 pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
+    // Crear el directorio si no existe
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     let bytes = match bincode::serialize(entry){
         Ok(b) => b,
         Err(e) => {
