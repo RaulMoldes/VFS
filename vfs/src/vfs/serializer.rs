@@ -91,7 +91,7 @@ pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option
     }
 
     let mut cursor = 0; // Cursor para avanzar en el archivo.
-    while cursor + marker_len <= bytes_read &&  entries.len() <= count { 
+    while cursor + marker_len <= bytes_read &&  entries.len() <= count - 1 { 
         // Para de leer cuando el buffer esta lleno
         // Buscar la marca de inicio en el buffer
         if &buffer[cursor..cursor + marker_len] == START_MARKER { 
@@ -99,6 +99,8 @@ pub fn load_vectors(path: &str, offset: usize, count: usize, buffer_size: Option
             // Saltar la marca de inicio
             println!("Marca de inicio de vector encontrada!");
             cursor += marker_len;
+
+            
 
             // Leer el tamaño del vector
             if cursor + INT_SIZE <= bytes_read {

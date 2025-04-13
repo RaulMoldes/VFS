@@ -26,7 +26,7 @@ fn main() -> io::Result<()> {
     manager.register_vector_from_simd(simd_vector1, "SIMD Example 1", vec!["tag1".into()], false, None);
     manager.register_vector_from_simd(simd_vector2, "SIMD Example 2", vec!["tag2".into()], false, None);
     manager.register_vector_from_simd(simd_vector3, "SIMD Example 3", vec!["tag3".into()], false, None);
-
+    manager.register_vector_from_simd(simd_vector3, "SIMD Example 34", vec!["tag3".into()], false, None);
     // Guardar el estado del VFSManager
     manager.save_state(VFS_STATE_PATH)?;
 

@@ -1,6 +1,7 @@
 
 use super::serializer::load_vectors;
 use super::vector::VFSVector;
+use super::storage_manager::VFSManager;
 
 use std::io;
 use std::simd::num::SimdFloat;
@@ -74,13 +75,14 @@ pub enum DistanceMethod {
 /// Estructura que representa una métrica con su tipo de búsqueda asociado.
 pub struct Ranker {
     search_type: SearchType,
-    distance_method: DistanceMethod
+    distance_method: DistanceMethod,
+    manager: VFSManager
 }
 
 impl Ranker {
     /// Constructor para crear una nueva instancia de `Ranker` con el tipo de búsqueda especificado.
-    pub fn new(search_type: SearchType, distance_method: DistanceMethod) -> Self {
-        Ranker { search_type,  distance_method }
+    pub fn new(search_type: SearchType, distance_method: DistanceMethod, manager: VFSManager) -> Self {
+        Ranker { search_type,  distance_method, manager }
     }
 
     /// Método para realizar la búsqueda basada en el tipo especificado.
@@ -109,28 +111,24 @@ impl Ranker {
     
     /// Implementación de la búsqueda exacta por lotes
     /// La búsqueda exacta requiere cargar todos los vectores en memoria en algún momento.
-    /// Usamos `load_vectors` para ir cargando los vectores en un buffer en memoria y luego los liberamos a medida que avanzamos.
+    /// Usamos `load_batch` para ir cargando los vectores en un buffer en memoria y luego los liberamos a medida que avanzamos.
     /// 
     /// # Parámetros
     /// - `query`: Referencia al vector de consulta.
     /// - `num_vectors_per_iteration`: Número de vectores a cargar por iteración.
-    /// - `buffer_size`: Tamaño del buffer opcional para la lectura de vectores.
     /// - `result_limit`: Número de vectores rankeados a devolver.
 
     /// # Devuelve
     /// Un vector de tuplas que contiene el vector y su distancia con respecto al vector de consulta.
     fn exact_search(&self,
         query: &VFSVector,
-        path: &str,
         num_vectors_per_iteration: usize, 
-        buffer_size: Option<usize>,
         result_limit: Option<usize>
        
     ) -> io::Result<Vec<(Box<VFSVector>, f32)>>  {
 
-        let mut offset = 0;
+
         let mut results = Vec::new();
-        let path = path;
         let limit = result_limit.unwrap_or(5); // Por defecto vale 5.
 
         // Esta es mi implementación del ordenamiento por lotes para rankear los vectores en función de la distancia
@@ -140,7 +138,7 @@ impl Ranker {
         let mut lowest_score = 0;
         loop {
             // Cargar un lote de vectores desde el archivo
-            let (vectors, new_offset) = load_vectors(path, offset, num_vectors_per_iteration, buffer_size)?;
+            let vectors = self.manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
             // Si no se cargaron vectores, hemos llegado al final del archivo
             if vectors.is_empty() {
                 println!("Final del archivo alcanzado. No hay más vectores a buscar");
@@ -164,7 +162,6 @@ impl Ranker {
             }
 
 
-            offset = new_offset;
 
         }
 
@@ -174,9 +171,7 @@ impl Ranker {
 
     /// Implementación de la búsqueda aproximada.
     fn approximate_search(&self, query: &VFSVector,
-        path: &str,
-        num_vectors_per_iteration: usize, 
-        buffer_size: Option<usize>,
+        num_vectors_per_iteration: usize,     
         result_limit: Option<usize>
        
     ) -> io::Result<Vec<(Box<VFSVector>, f32)>> {
@@ -235,13 +230,14 @@ impl Ranker {
 
         // Paso 1: Cargar todos los vectores en memoria  por lotes para construir el índice
         
-        let mut offset = 0;
+        
         let mut n = 0;
 
         // Paso 2: Construir el índice HNSW
             loop {
-            let (vectors, new_offset) = load_vectors(path, offset, num_vectors_per_iteration, buffer_size)?;
+            let vectors = self.manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
             if vectors.is_empty() {
+                println("Final del archivo alcanzado. No hay más vectores a leer")
                 break;
             }
             // Crear el índice HNSW para este chunl de vectores.
@@ -279,7 +275,7 @@ impl Ranker {
                 results.truncate(limit);
             }
             
-            offset = new_offset;
+           
             
         }
 

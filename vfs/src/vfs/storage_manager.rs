@@ -57,6 +57,7 @@ impl VFSManager {
 
     pub fn load_batch(&mut self, count: usize) -> std::io::Result<Vec<VFSVector>> {
         let (entries, new_offset) = load_vectors(STORAGE_PATH, self.current_offset, count, None)?;
+  
         self.current_offset = new_offset;
         Ok(entries)
     }
