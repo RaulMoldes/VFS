@@ -28,6 +28,8 @@ pub struct VFSManager {
 
 impl VFSManager {
     pub fn new(name: &str) -> Self {
+
+        
         VFSManager {
             name: name.to_string(),
             next_id: 1,
@@ -36,12 +38,35 @@ impl VFSManager {
         }
     }
 
+    pub fn reset_state(&mut self) -> io::Result<()> {  // Añadido el tipo de retorno
+        // Truncar archivo de datos
+        
+        {
+            let file = OpenOptions::new()
+            .write(true)  
+            .create(true)
+            .truncate(true)
+            .open(STORAGE_PATH)?;
+            
+       
+        }
+        self.current_offset = 0;
+        self.memtable = HashMap::new();
+        self.next_id = 1;
+        
+        Ok(())  
+    }
+
     fn next_id(&mut self) -> u64 {
         let aux = self.next_id;
         self.next_id += 1;
         aux
     }
 
+    pub fn get_current_offset(&self) -> usize{
+        println!("Current offset is {}", self.current_offset);
+        self.current_offset
+    }
   
 
     pub fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {

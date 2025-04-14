@@ -38,7 +38,6 @@ pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
 
     let mut file = OpenOptions::new()
         .append(true)
-        .create(true)
         .open(path)?;
     
 

@@ -123,6 +123,7 @@ use core::{
     slice::Iter,
 };
 use std::collections::HashSet;
+use std::io;
 use super::vector::VFSVector;
 use rand_core::{RngCore, SeedableRng};
 
@@ -259,7 +260,7 @@ where
     }
 
 
-    fn initialize_searcher(&self, q: &T, qid: Uuid, searcher: &mut Searcher) {
+    fn initialize_searcher(&self, q: &T,  searcher: &mut Searcher) {
         // Clear the searcher.
         searcher.clear();
         // Calculamos la distancia al punto de entrada.
@@ -351,7 +352,7 @@ where
     ) {
 
         // Vamos sacando vecinos de la cola de candidatos.
-        while let Some(Neighbor { vid, index, .. }) = searcher.candidates.pop() {
+        while let Some(Neighbor { index, .. }) = searcher.candidates.pop() {
             for neighbor in match layer {
                 Layer::NonZero(layer) => layer[index as usize].get_neighbors(), // Si es no-cero buscamos en capa no-cero
                 Layer::Zero => self.zero[index as usize].get_neighbors(), // Si es cero buscamos en capa cero.
@@ -692,12 +693,12 @@ where
 // Wrapper para poder integrarlo en el proyecto.
 
 
-pub type DefaultHNSW<F,R> = Hnsw<F, Vec<f32>, R, 16, 40>;
+pub type DefaultHNSW<F,R> = Hnsw<F, VFSVector, R, 16, 40>;
 
 // IMPLEMENTACIÓN DE VFSANN//
 pub struct VFSANNIndex<F, R> 
 where
-    F: Fn(&Vec<f32>, &Vec<f32>) -> f32,
+    F: Fn(&VFSVector, &VFSVector) -> f32,
 {
     /// Función de distancia entre dos VFSVector:
     hnsw: DefaultHNSW<F, R>,
@@ -709,7 +710,7 @@ where
 
 impl<F,R> VFSANNIndex<F, R> 
 where
-    F: Fn(&Vec<f32>, &Vec<f32>) -> f32,
+    F: Fn(&VFSVector, &VFSVector) -> f32,
     R: RngCore + SeedableRng,
 {
 
@@ -726,14 +727,20 @@ where
         }
     }
 
+    fn get_feature(&self, index: usize) -> Box<VFSVector> {
+        // Wrapper para obtener el vector de características desde self.hnsw.features
+        let feature_data = &self.hnsw.features[index];  // Ajusta esto según tu estructura
+        Box::new(feature_data.clone())  // Asumiendo que existe un constructor así
+    }
+
     pub fn get_searcher(&self) -> Searcher{
         self.searcher.clone()
     }
 
     pub fn insert_one(&mut self, vfs_vector: VFSVector) -> usize {
-        let vf32 = vfs_vector.as_f32_vec();
+      
         let mut searcher = self.get_searcher();
-        self.hnsw.insert(vf32, &mut searcher)
+        self.hnsw.insert(vfs_vector, &mut searcher)
 
     }
 
@@ -744,7 +751,7 @@ where
 
     }
 
-    pub fn query(&mut self, vfs_vector: &VFSVector) -> Vec<Neighbor> {
+    pub fn query(&mut self, vfs_vector: &VFSVector) -> io::Result<Vec<(Box<VFSVector>, f32)>> {
         // Inicializar output como un vector mutable
         let mut output = vec![
             Neighbor {
@@ -754,19 +761,34 @@ where
             1
         ];
     
-        // Convertir el vector a un slice de f32
-        let vf32 = vfs_vector.as_f32_vec();
+       
     
         // Inicializar el searcher
         let mut searcher = self.get_searcher();
     
         // Realizar la búsqueda
-        let mut result = self.hnsw.nearest(&vf32, 24, &mut searcher, &mut output);
-
-        output
+        let mut result = self.hnsw.nearest(&vfs_vector, 24, &mut searcher, &mut output);
+        // Result es un array de Neighbors. Podemos obtener las features a partir de su índice, ya que el struct Neighbors contiene {index, distance}
+        // pero yo quiero el mapeo completo feature, distance.
+        // features es una propiedad de self.hnsw
+        
+        // Mapear los resultados para obtener (VFSVector, distance)
+        let mut mapped_results = Vec::with_capacity(output.len());
+    
+        for neighbor in output.iter() {
+            if neighbor.index != !0 {  // Verificar que el índice sea válido
+                // Obtener el vector de características correspondiente al índice
+                let feature = self.get_feature(neighbor.index);
+            
+                // Añadir el par (feature, distance) al resultado
+             mapped_results.push((feature, neighbor.distance));
+            }
+        }
+    
+    Ok(mapped_results)
+    
     
        
     }
 
 }
-

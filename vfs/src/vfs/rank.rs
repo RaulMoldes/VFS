@@ -86,24 +86,18 @@ impl Ranker {
     }
 
     /// Método para realizar la búsqueda basada en el tipo especificado.
-    pub fn search(&self, query: &VFSVector,
-        path: &str,
+    pub fn search(&mut self, query: &VFSVector,
         num_vectors_per_iteration: usize, 
-        buffer_size: Option<usize>,
-        result_limit: Option<usize>) -> io::Result<Vec<(Box<VFSVector>, f32)>> {
+        result_limit: Option<usize>) -> io::Result<Vec<(u64, f32)>> {
 
         match self.search_type {
 
             SearchType::Exact => self.exact_search(query,
-                path,
                 num_vectors_per_iteration, 
-                buffer_size,
                 result_limit),
 
-            SearchType::Approximate => self.approximate_search(query,
-                path,
-                num_vectors_per_iteration, 
-                buffer_size,
+            SearchType::Approximate => self.approximate_search(query,      
+                num_vectors_per_iteration,    
                 result_limit),
         }
     }
@@ -120,12 +114,12 @@ impl Ranker {
 
     /// # Devuelve
     /// Un vector de tuplas que contiene el vector y su distancia con respecto al vector de consulta.
-    fn exact_search(&self,
+    fn exact_search(&mut self,
         query: &VFSVector,
         num_vectors_per_iteration: usize, 
         result_limit: Option<usize>
        
-    ) -> io::Result<Vec<(Box<VFSVector>, f32)>>  {
+    ) -> io::Result<Vec<(u64, f32)>>  {
 
 
         let mut results = Vec::new();
@@ -137,6 +131,8 @@ impl Ranker {
         
         let mut lowest_score = 0;
         loop {
+
+            let off = self.manager.get_current_offset();
             // Cargar un lote de vectores desde el archivo
             let vectors = self.manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
             // Si no se cargaron vectores, hemos llegado al final del archivo
@@ -148,8 +144,14 @@ impl Ranker {
             // Calcular las distancias y almacenar en el buffer de salida:
             for (index, vector) in vectors.iter().enumerate() {
                 let distance = self.calculate_distance(query, vector);
-                results.push((Box::new(vector.clone()), distance));
-            }
+    
+                let id = vector.id();
+                results.push((id, distance));
+    
+                println!("Se obtiene el vector con id: {}", id);
+                println!("Se calcula una distancia de: {:.6}", distance);
+                println!("------------------------------------");
+                }
             // Ordenar los resultados por distancia en orden ascendente
             results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -170,27 +172,28 @@ impl Ranker {
     }
 
     /// Implementación de la búsqueda aproximada.
-    fn approximate_search(&self, query: &VFSVector,
+    fn approximate_search(&mut self, query: &VFSVector,
         num_vectors_per_iteration: usize,     
         result_limit: Option<usize>
        
-    ) -> io::Result<Vec<(Box<VFSVector>, f32)>> {
+    ) -> io::Result<Vec<(u64, f32)>> {
         // Implementación de la lógica para búsqueda aproximada.
         let limit = result_limit.unwrap_or(5);
-        
-        // Determinar la dimensión a partir del vector de consulta
-        let dim = query.as_f32_vec().len();
 
         // Crear la función de distancia según el método de distancia configurado
-        let distance_fn: Box<dyn Fn(&Vec<f32>, &Vec<f32>) -> f32> = match self.distance_method {
-            DistanceMethod::Euclidean => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+        let distance_fn: Box<dyn Fn(&VFSVector, &VFSVector) -> f32> = match self.distance_method {
+            DistanceMethod::Euclidean => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
+                let v1 = vfs1.as_f32_vec();
+                let v2 = vfs2.as_f32_vec();
                 v1.iter()
                     .zip(v2.iter())
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f32>()
                     .sqrt()
             }),
-            DistanceMethod::Cosine => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+            DistanceMethod::Cosine => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
+                let v1 = vfs1.as_f32_vec();
+                let v2 = vfs2.as_f32_vec();
                 let dot: f32 = v1.iter()
                     .zip(v2.iter())
                     .map(|(a, b)| a * b)
@@ -201,9 +204,12 @@ impl Ranker {
                 
                 1.0 - (dot / (norm_1 * norm_2))
             }),
-            DistanceMethod::SimdEuclidean => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+            DistanceMethod::SimdEuclidean => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
                 // En este caso, no podemos usar directamente la macro SIMD
                 // porque estamos en un closure, así que usamos la versión no-SIMD
+
+                let v1 = vfs1.as_f32_vec();
+                let v2 = vfs2.as_f32_vec();
                 println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia euclídea.");
                 v1.iter()
                     .zip(v2.iter())
@@ -211,10 +217,14 @@ impl Ranker {
                     .sum::<f32>()
                     .sqrt()
             }),
-            DistanceMethod::SimdCosine => Box::new(|v1: &Vec<f32>, v2: &Vec<f32>| {
+            DistanceMethod::SimdCosine => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
                 // Aquí también usamos la versión no-SIMD por la misma razón
     
                 println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia coseno.");
+
+                let v1 = vfs1.as_f32_vec();
+                let v2 = vfs2.as_f32_vec();
+
                 let dot: f32 = v1.iter()
                     .zip(v2.iter())
                     .map(|(a, b)| a * b)
@@ -230,71 +240,58 @@ impl Ranker {
 
         // Paso 1: Cargar todos los vectores en memoria  por lotes para construir el índice
         
-        
-        let mut n = 0;
+        let ef_construction = 6;
+       
+
+        // Variable para almacenar todos los resultados de las búsquedas en diferentes lotes
+        let mut all_results: Vec<(u64, f32)> = Vec::new();
+
 
         // Paso 2: Construir el índice HNSW
-            loop {
-            let vectors = self.manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
-            if vectors.is_empty() {
-                println("Final del archivo alcanzado. No hay más vectores a leer")
-                break;
-            }
-            // Crear el índice HNSW para este chunl de vectores.
-            let mut ann_index = VFSANNIndex::<_, SmallRng>::new(distance_fn, Some(ef_construction));
+        let mut ann_index = VFSANNIndex::<_, SmallRng>::new(distance_fn, Some(ef_construction));
 
-            // Hash table para almacenar el mapeo id -> vector
-            let mut id_to_vector: HashMap<uuid::Uuid, Box<VFSVector>> = HashMap::new();
-
-            // Indexar los vectores de este lote
-            for vector in vectors {
-                let id = vector.id();
-                ann_index.insert_one(vector);
-                id_to_vector.insert(id, Box::new(vector));
-                n += 1;
-            }
-            println!("Cargados {} vectores en índice HNSW ", n);          
-
-            // Paso 3: Realizar la búsqueda aproximada
-            let ann_results = ann_index.query(query);
-            // Paso 4: Convertir los resultados al formato esperado
-            let mut results = Vec::with_capacity(ann_results.len());
-            
-            // TODO: arreglar función query para que devuelva un array con el mapeo uuid - distancia
-            for (uuid, distance) in ann_results {
-                if let Some(vector) = id_to_vector.get(&uuid) {
-                    results.push((vector.clone(), distance));
-                }
-            }
-            
-            // Ordenar resultados por distancia en orden ascendente
-            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Limitar a la cantidad de resultados solicitados
-            if results.len() > limit {
-                results.truncate(limit);
-            }
-            
-           
-            
-        }
-
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Ordenar resultados por distancia en orden ascendente
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Limitar a la cantidad de resultados solicitados
-        if results.len() > limit {
-            results.truncate(limit);
-        }
+        loop {
+            let vectors = self.manager.load_batch(num_vectors_per_iteration)
+            .expect("Error al cargar el batch de vectores");
         
-    
-        println!("Búsqueda aproximada completada: encontrados {} resultados", results.len());
+            if vectors.is_empty() {
+                println!("Final del archivo alcanzado. No hay más vectores a leer");
+             break;
+            }
+        
+            ann_index.insert_many(vectors);
+            
+             
 
-        Ok(results)
+        
+    }
+
+    // Paso 3: Realizar la búsqueda aproximada
+    let ann_results = ann_index.query(query)?; // Usar ? para manejar errores
+
+    // Paso 4: Convertir los resultados al formato esperado
+    for (vector, distance) in &ann_results {
+        let id = vector.id();
+        all_results.push((id, *distance));
+    }
+
+    if ann_results.len() == 0 as usize {
+        return Ok(Vec::new());
+    }
+
+    
+
+    // Ordenar todos los resultados por distancia en orden ascendente
+    all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Limitar a la cantidad de resultados solicitados
+    if all_results.len() > limit {
+        all_results.truncate(limit);
+    }
+
+    println!("Búsqueda aproximada completada: encontrados {} resultados", all_results.len());
+
+    Ok(all_results)
         
     }
 
