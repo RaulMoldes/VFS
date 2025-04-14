@@ -1,7 +1,7 @@
 
 use super::serializer::load_vectors;
 use super::vector::VFSVector;
-use super::storage_manager::VFSManager;
+use super::storage_manager::{VFSManager, ResetOptions};
 
 use std::io;
 use std::simd::num::SimdFloat;
@@ -76,29 +76,30 @@ pub enum DistanceMethod {
 pub struct Ranker {
     search_type: SearchType,
     distance_method: DistanceMethod,
-    manager: VFSManager
+ //   manager: &'a mut VFSManager
 }
 
 impl Ranker {
     /// Constructor para crear una nueva instancia de `Ranker` con el tipo de búsqueda especificado.
-    pub fn new(search_type: SearchType, distance_method: DistanceMethod, manager: VFSManager) -> Self {
-        Ranker { search_type,  distance_method, manager }
+    pub fn new(search_type: SearchType, distance_method: DistanceMethod) -> Self {
+        Ranker{ search_type,  distance_method}
     }
 
     /// Método para realizar la búsqueda basada en el tipo especificado.
     pub fn search(&mut self, query: &VFSVector,
         num_vectors_per_iteration: usize, 
-        result_limit: Option<usize>) -> io::Result<Vec<(u64, f32)>> {
+        result_limit: Option<usize>, manager: &mut VFSManager) -> io::Result<Vec<(u64, f32)>> {
 
         match self.search_type {
 
             SearchType::Exact => self.exact_search(query,
                 num_vectors_per_iteration, 
-                result_limit),
+                result_limit, manager),
 
             SearchType::Approximate => self.approximate_search(query,      
                 num_vectors_per_iteration,    
-                result_limit),
+                result_limit,
+                manager),
         }
     }
 
@@ -117,7 +118,8 @@ impl Ranker {
     fn exact_search(&mut self,
         query: &VFSVector,
         num_vectors_per_iteration: usize, 
-        result_limit: Option<usize>
+        result_limit: Option<usize>,
+        manager: &mut VFSManager
        
     ) -> io::Result<Vec<(u64, f32)>>  {
 
@@ -130,11 +132,22 @@ impl Ranker {
         // Así que para este caso de uso no necesito nada más que eso junto con una medida de distancia que me sirva para rankear.
         
         let mut lowest_score = 0;
+
+
+         // Vamos a iterar sobre el archivo de datos, así que como siempre, reseteamos el offset del manager
+         let options = ResetOptions::default(); // resetea el offset poniendolo a 0.
+        
+
+         if let Err(e) = manager.reset_state(options) {
+            println!("Error al resetear el estado del manager");
+            return Err(e);
+        }
+
         loop {
 
-            let off = self.manager.get_current_offset();
+            let off = manager.get_current_offset();
             // Cargar un lote de vectores desde el archivo
-            let vectors = self.manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
+            let vectors = manager.load_batch(num_vectors_per_iteration).expect("Error al cargar el batch de vectores");
             // Si no se cargaron vectores, hemos llegado al final del archivo
             if vectors.is_empty() {
                 println!("Final del archivo alcanzado. No hay más vectores a buscar");
@@ -174,7 +187,8 @@ impl Ranker {
     /// Implementación de la búsqueda aproximada.
     fn approximate_search(&mut self, query: &VFSVector,
         num_vectors_per_iteration: usize,     
-        result_limit: Option<usize>
+        result_limit: Option<usize>,
+        manager: &mut VFSManager
        
     ) -> io::Result<Vec<(u64, f32)>> {
         // Implementación de la lógica para búsqueda aproximada.
@@ -249,9 +263,18 @@ impl Ranker {
 
         // Paso 2: Construir el índice HNSW
         let mut ann_index = VFSANNIndex::<_, SmallRng>::new(distance_fn, Some(ef_construction));
+        // Oh no, el vector no estaba en la memtable.
+        let options = ResetOptions::default(); // resetea el offset poniendolo a 0.
+        
+
+        if let Err(e) = manager.reset_state(options) {
+            println!("Error al resetear el estado del manager");
+            return Err(e);
+        }
+        
 
         loop {
-            let vectors = self.manager.load_batch(num_vectors_per_iteration)
+            let vectors = manager.load_batch(num_vectors_per_iteration)
             .expect("Error al cargar el batch de vectores");
         
             if vectors.is_empty() {

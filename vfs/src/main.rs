@@ -8,7 +8,7 @@ use core::simd::Simd;
 use std::io;
 
 use vfs::vector::VFSVector;
-use vfs::storage_manager::VFSManager;
+use vfs::storage_manager::{VFSManager, ResetOptions};
 use vfs::rank::{Ranker, SearchType,DistanceMethod};
 
 const VFS_STATE_PATH: &str =  "vfs_state.bin";
@@ -29,7 +29,18 @@ fn main() -> io::Result<()> {
     // Inicializar el VFSManager
     let mut manager = VFSManager::new("my_manager");
 
-    manager.reset_state();
+    // Reseteamos para asegurar que funcionará desde 0 y evitar 
+    let options = ResetOptions {
+        truncate_data_file: true,
+        storage_path: None, // por defecto es data/vectors.dat
+        reset_offset: true,
+        new_offset: Some(0), 
+        clear_memtable: true,
+        reset_id_counter: true,
+        new_id_start: Some(1)
+    };
+
+    manager.reset_state(options);
     // Crear instancias de VFSVector a partir de los vectores SIMD
     manager.register_vector_from_simd(simd_vector1, "SIMD Example 1", vec!["tag1".into()], false, None);
     manager.register_vector_from_simd(simd_vector2, "SIMD Example 2", vec!["tag2".into()], false, None);
@@ -41,8 +52,8 @@ fn main() -> io::Result<()> {
     // Guardar la memtable en disco.
     manager.flush_manual();
 
-    let mut ranker = Ranker::new(SearchType::Approximate, DistanceMethod::Euclidean, manager);
-    let result = match ranker.search(&query, 3, Some(4)) {
+    let mut ranker = Ranker::new(SearchType::Approximate, DistanceMethod::Euclidean);
+    let result = match ranker.search(&query, 3, Some(4), &mut manager) {
         Ok(result_data) => result_data,
         Err(e) => {
             eprintln!("Error en la búsqueda: {}", e);
@@ -59,6 +70,24 @@ fn main() -> io::Result<()> {
     
     for (i, (id, distancia)) in result.iter().enumerate() {
         println!("{:<10} {:<15.6}", id, distancia);
+        if let Some(v) = manager.get_vector_by_id(*id) {
+            println!("Vector encontrado: ID={}", v.id());
+            
+            // Imprimir el nombre del vector
+            let name = &v.metadata().name;
+            println!("Nombre: {}", name);
+            
+            // Imprimir las etiquetas del vector
+            let tags = &v.metadata().tags;  // Asumiendo que existe un método tags() que devuelve un Vec<String> o similar
+           
+            println!("Etiquetas: {}", tags.join(", "));
+           
+            
+         
+        } else {
+            println!("No se encontró ningún vector con ID={}", id);
+        }
+
     }
     
     println!("\nTotal de resultados: {}", result.len());
