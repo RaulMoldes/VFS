@@ -7,6 +7,7 @@ use super::err::VFSError;
 use std::simd::{SupportedLaneCount, LaneCount};
 use core::simd::Simd;
 use serde::{Serialize, Deserialize};
+use std::collections::BTreeMap;
 
 const FLUSH_THRESHOLD: usize = 10; // Número de vectores que se pueden almacenar en memoria antes de flushear la memtable.
 const STORAGE_PATH: &str = "data/vectors.dat";
@@ -18,7 +19,8 @@ use indexmap::IndexMap;
 struct VFSState{
     name: String,
     next_id: u64,
-    current_offset: usize
+    current_offset: usize,
+    index_map: BTreeMap<u64, usize>,
 
 }
 
@@ -30,6 +32,7 @@ pub struct ResetOptions {
     pub reset_offset: bool,
     pub new_offset: Option<usize>,
     pub clear_memtable: bool,
+    pub clear_indexmap: bool,
     pub reset_id_counter: bool,
     pub new_id_start: Option<u64>,
 }
@@ -43,6 +46,7 @@ impl Default for ResetOptions {
             reset_offset: true,
             new_offset: Some(0),
             clear_memtable: false,
+            clear_indexmap: false,
             reset_id_counter: false,
             new_id_start: None
         }
@@ -51,6 +55,8 @@ impl Default for ResetOptions {
 
 pub struct VFSManager {
     pub name: String,
+    index_map: BTreeMap<u64, usize>, // Usamos BTREEMap para asemejar la estructura btree típica de las bases de datos relacionales.
+    // Representa un índice id -> offset y perimite realizar búsquedas rápidas por id.
     next_id: u64,
     memtable: IndexMap<u64, VFSVector>, /// Uso indexmap en vez de hashmap por que respeta el orden y unicidad. Funciona mejor
     current_offset: usize,
@@ -62,6 +68,7 @@ impl VFSManager {
         
         VFSManager {
             name: name.to_string(),
+            index_map: BTreeMap::new(),
             next_id: 1,
             memtable: IndexMap::new(),
             current_offset: 0,
@@ -93,6 +100,10 @@ impl VFSManager {
         if options.clear_memtable {
             self.memtable = IndexMap::new();
         }
+
+        if options.clear_indexmap {
+            self.index_map = BTreeMap::new();
+        }
     
         if options.reset_id_counter {
             self.next_id = options.new_id_start.unwrap_or(1);
@@ -109,6 +120,7 @@ impl VFSManager {
         Ok(aux)
     }
 
+
     pub fn get_current_offset(&self) -> usize{
         println!("Current offset is {}", self.current_offset);
         self.current_offset
@@ -116,8 +128,9 @@ impl VFSManager {
   
 
     fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {
-        for (_, vector) in self.memtable.drain(..) {
-            save_vector(&vector, STORAGE_PATH)?;
+        for (id, vector) in self.memtable.drain(..) {
+            let offset = save_vector(&vector, STORAGE_PATH)?;
+            self.index_map.insert(id, offset); // Indexar los vectores 
         }
         Ok(())
     }
@@ -142,7 +155,8 @@ impl VFSManager {
 
             // Hacer flush de estos vectores a disco. Se deben guardar a disco ya que si estaban en la memtable significa que no han sido flusheados
             for vector in &mem_vectors {
-                save_vector(vector, STORAGE_PATH)?;
+                let offset = save_vector(&vector, STORAGE_PATH)?;
+                self.index_map.insert(vector.id(), offset);
             }
 
             batch.extend(mem_vectors);
@@ -159,6 +173,16 @@ impl VFSManager {
         Ok(batch)
     }
 
+    fn load_vector_at_offset(&self, offset: usize) -> Result<(VFSVector), VFSError> {
+        // Carga un único vector en el offset especificado.
+        let (vec, _) = load_vectors(STORAGE_PATH, offset, 1, None)?;
+        if vec.len() == 0 {
+            println!("No había vectores en ese offset");
+            return Err(VFSError::InvalidVector("No vectors at the specified offset".to_string()))
+        }
+        return Ok(vec[0].clone())
+    }
+
     pub fn get_max_id(&self) -> u64 {
         self.next_id - 1
     }
@@ -171,11 +195,17 @@ impl VFSManager {
             println!("Vector encontrado en memtable con ID: {}", id);
             return Some(vector.clone());
         }
+
+        // Paso 2. Comprobamos el índice para no tener que hacer una lectura secuencial.
+        if let Some(offset) = self.index_map.get(&id) {
+            println!("Vector encontrado en el índice!");
+            let vector = self.load_vector_at_offset(*offset).ok()?;
+            return Some(vector);
+        }
         
-        // Oh no, el vector no estaba en la memtable.
+        // Paso 3: Oh no, el vector no estaba en la memtable ni en el índice.
         let options = ResetOptions::default(); // resetea el offset poniendolo a 0.
         
-
         if let Err(e) = self.reset_state(options) {
             println!("Error al resetear el estado: {}", e);
             return None;
@@ -288,7 +318,8 @@ impl VFSManager {
        
         Ok(id)
     }
-
+    
+    // Realiza un snapshot del estado actual del manager y lo graba en disco.
     pub fn save_state(&mut self, path: Option<&'static str>) -> Result<(), VFSError> {
         let fpath = path.unwrap_or(VFS_STATE_PATH);
         // Crear el directorio si no existe
@@ -300,6 +331,8 @@ impl VFSManager {
             next_id: self.next_id,
             name: self.name.clone(),
             current_offset: self.current_offset,
+            index_map: self.index_map.clone(),
+            
         };
 
         let encoded: Vec<u8> = bincode::serialize(&state)
@@ -342,6 +375,7 @@ impl VFSManager {
 
         self.next_id = state.next_id;
         self.name = state.name;
+        self.index_map = state.index_map;
         self.current_offset = state.current_offset;
         Ok(())
     }

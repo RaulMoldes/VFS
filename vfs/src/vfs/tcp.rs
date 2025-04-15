@@ -139,6 +139,12 @@ pub fn handle_request(mut stream: TcpStream, state: Arc<Mutex<Option<ServerState
         ("POST", "/flush") => {
             flush_memtable(&state)
         },
+        ("POST", "/snapshot") => {
+            save_state(&state)
+        }
+        ("POST", "/restore") => {
+            load_state(&state)
+        }
         _ => (404, json!({"error": "Not found"}).to_string()),
     };
     
@@ -168,6 +174,38 @@ fn status_code_to_text(status: u16) -> &'static str {
         404 => "404 Not Found",
         500 => "500 Internal Server Error",
         _ => "200 OK",
+    }
+}
+
+
+fn save_state(state: &Arc<Mutex<Option<ServerState>>>) -> (u16, String) {
+    let mut guard = state.lock().unwrap();
+    if let Some(inner_state) = guard.as_mut() {
+        match inner_state.manager.save_state(None) {
+            Ok(_) => (200, json!({"status": "State saved successfully"}).to_string()),
+            Err(e) => (
+                500,
+                json!({"error": format!("Failed to save state: {}", e)}).to_string(),
+            ),
+        }
+    } else {
+        (400, json!({"error": "VFS Manager not initialized"}).to_string())
+    }
+}
+
+
+fn load_state(state: &Arc<Mutex<Option<ServerState>>>) -> (u16, String) {
+    let mut guard = state.lock().unwrap();
+    if let Some(inner_state) = guard.as_mut() {
+        match inner_state.manager.load_state(None) {
+            Ok(_) => (200, json!({"status": "State loaded successfully"}).to_string()),
+            Err(e) => (
+                500,
+                json!({"error": format!("Failed to load state: {}", e)}).to_string(),
+            ),
+        }
+    } else {
+        (400, json!({"error": "VFS Manager not initialized"}).to_string())
     }
 }
 
@@ -243,6 +281,7 @@ fn init_manager(req: InitRequest, state: &Arc<Mutex<Option<ServerState>>>) -> (u
         reset_offset: true,
         new_offset: Some(0),
         clear_memtable: true,
+        clear_indexmap: true,
         reset_id_counter: true,
         new_id_start: Some(1),
     };
