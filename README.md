@@ -159,3 +159,31 @@ No requiere cuerpo JSON.
   - 200 OK: En caso de éxito: ```{"status": "success", "message": "Memtable flushed to disk"}```
   - 500 Internal Server Error: Si ocurre un error al realizar el flush: ```{"status": "error","error": "<mensaje de error>","error_type": "memtable_error" }```
   - 400 Bad Request: Si el VFSManager no ha sido inicializado: ```{"error": "VFSManager is not initialized"}```
+
+6. **POST /snapshot**
+
+* **Descripción:**
+Guarda el estado actual del `VFSManager` en disco. Esto incluye cualquier metadato necesaria para restaurar la sesión más adelante (por ejemplo, offset actual, vectores en memoria, etc.).
+
+* **Request:**
+No requiere cuerpo JSON.
+
+* **Respuesta:**
+ - 200 OK: Si el estado fue guardado correctamente: ```{ "status": "State saved successfully" }```
+ - 400 Bad Request: Si el VFSManager no ha sido inicializado: ```{ "error": "VFS Manager not initialized" }```
+ - 500 Internal Server Error: Si ocurrió un error al guardar el estado: ```{ "error": "Failed to save state: <mensaje de error>" }```
+
+
+7. **POST /restore**
+
+* **Descripción:**
+Restaura el estado previamente guardado del `VFSManager` desde disco. Esto permite continuar operaciones desde el último snapshot persistido.
+
+* **Request:**
+No requiere cuerpo JSON.
+
+* **Respuesta:**
+ - 200 OK: Si el estado fue cargado correctamente: ```{ "status": "State loaded successfully" }```
+ - 400 Bad Request: Si el VFSManager no ha sido inicializado: ```{ "error": "VFS Manager not initialized" }```
+ - 500 Internal Server Error: Si ocurrió un error al cargar el estado: ```{ "error": "Failed to load state: <mensaje de error>" }```
+

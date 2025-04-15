@@ -71,4 +71,15 @@ curl -X POST http://127.0.0.1:9001/search      -H "Content-Type: application/jso
          }'
 ```
 
+## Buscar por id
+
+```bash
+curl -X GET http://127.0.0.1:9001/vectors/1
+
+```
+## Guardar y recargar el estado
+```bash
+curl -X POST http://127.0.0.1:9001/state/save
+curl -X POST http://127.0.0.1:9001/state/load
+```
 

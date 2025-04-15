@@ -17,7 +17,12 @@ const START_MARKER: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
 // Función para serializar un vector y guardarlo en el archivo que viene dado por path.
 // El vector se guarda con un marcador de inicio `START_MARKER`, lo que permite identificar si vamos a leer un vector o no.
 // Se guarda también el tamaño del vector para poder avanzar el offset al deserializar.
-pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
+// Parámetros:
+// - entry: la entrada (vector) a guardar.
+// - path: la ruta al archivo de datos.
+// Devuelve:
+// - usize: el offset donde se guardó el vector.
+pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<(usize)> {
     // Crear el directorio si no existe
     if let Some(parent) = std::path::Path::new(path).parent() {
         std::fs::create_dir_all(parent)?;
@@ -38,8 +43,11 @@ pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
 
     let mut file = OpenOptions::new()
         .append(true)
+        .read(true) // importante: necesitamos poder hacer seek
         .open(path)?;
     
+    // Obtener offset actual antes de escribir
+    let offset = file.seek(SeekFrom::End(0))?;
 
     // Escribir la marca de inicio
     if let Err(e) = file.write_all(&START_MARKER) {
@@ -59,7 +67,7 @@ pub fn save_vector(entry: &VFSVector, path: &str) -> std::io::Result<()> {
         return Err(e);
     }
 
-    Ok(())
+    Ok(offset.try_into().unwrap())
 }
 
 // Función para cargar un número determinado de vectores en memoria.
