@@ -112,17 +112,15 @@ pub fn handle_request(mut stream: TcpStream, state: Arc<Mutex<Option<ServerState
             }
         },
         ("POST", "/init") => {
-            // Aquí tratamos el estado como Option<ServerState>
-            let mut state_lock = state.lock().unwrap();
-            if state_lock.is_some() {
-                (400, json!({"error": "Already initialized"}).to_string())
-            } else {
-                if let Ok(init_request) = serde_json::from_str::<InitRequest>(&body) {
+          
+            if let Ok(init_request) = serde_json::from_str::<InitRequest>(&body) {
+
+                    println!("Solictud correcta");
                     init_manager(init_request, &state)
                 } else {
                     (400, json!({"error": "Invalid JSON for init"}).to_string())
                 }
-            }
+            
         }
         ("POST", "/vectors") => {
             if let Ok(request) = serde_json::from_str::<VectorRegisterRequest>(&body) {
@@ -232,7 +230,7 @@ fn get_vector(id: u64, state: &Arc<Mutex<Option<ServerState>>>) -> (u16, String)
 
 fn init_manager(req: InitRequest, state: &Arc<Mutex<Option<ServerState>>>) -> (u16, String) {
     let mut guard = state.lock().unwrap();
-
+    println!("He obtenido el lock");
     if guard.is_some() {
         return (400, json!({"error": "VFSManager is already initialized"}).to_string());
     }
