@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader,  Read, Write};
 use bincode;
@@ -12,6 +11,8 @@ use serde::{Serialize, Deserialize};
 const FLUSH_THRESHOLD: usize = 10; // Número de vectores que se pueden almacenar en memoria antes de flushear la memtable.
 const STORAGE_PATH: &str = "data/vectors.dat";
 const VFS_STATE_PATH: &str =  "state/vfs_state.bin";
+
+use indexmap::IndexMap; 
 
 #[derive(Debug, Serialize, Deserialize)]
 struct VFSState{
@@ -51,7 +52,7 @@ impl Default for ResetOptions {
 pub struct VFSManager {
     pub name: String,
     next_id: u64,
-    memtable: HashMap<u64, VFSVector>,
+    memtable: IndexMap<u64, VFSVector>, /// Uso indexmap en vez de hashmap por que respeta el orden y unicidad. Funciona mejor
     current_offset: usize,
 }
 
@@ -62,7 +63,7 @@ impl VFSManager {
         VFSManager {
             name: name.to_string(),
             next_id: 1,
-            memtable: HashMap::new(),
+            memtable: IndexMap::new(),
             current_offset: 0,
         }
     }
@@ -90,7 +91,7 @@ impl VFSManager {
         }
     
         if options.clear_memtable {
-            self.memtable = HashMap::new();
+            self.memtable = IndexMap::new();
         }
     
         if options.reset_id_counter {
@@ -115,7 +116,7 @@ impl VFSManager {
   
 
     fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {
-        for (_, vector) in self.memtable.drain() {
+        for (_, vector) in self.memtable.drain(..) {
             save_vector(&vector, STORAGE_PATH)?;
         }
         Ok(())
@@ -126,11 +127,36 @@ impl VFSManager {
         Ok(())
     }
 
+    
+
     pub fn load_batch(&mut self, count: usize) -> std::io::Result<Vec<VFSVector>> {
-        let (entries, new_offset) = load_vectors(STORAGE_PATH, self.current_offset, count, None)?;
-  
-        self.current_offset = new_offset;
-        Ok(entries)
+        let mut batch: Vec<VFSVector> = Vec::new();
+        // P1: Extraer de la memtable solo la cantidad de vectores requerida si es posible
+        if !self.memtable.is_empty() {
+            // Calcular cuántos elementos vamos a extraer: el mínimo entre el count solicitado y la cantidad en memtable.
+            let to_extract = count.min(self.memtable.len());
+        
+            // Extraer esos elementos sin vaciar toda la memtable.
+            // Esto depende del tipo de colección que uses. Si es un Vec, podrías hacer:
+            let mem_vectors: Vec<VFSVector> = self.memtable.drain(..to_extract).map(|(_, v)| v).collect();
+
+            // Hacer flush de estos vectores a disco. Se deben guardar a disco ya que si estaban en la memtable significa que no han sido flusheados
+            for vector in &mem_vectors {
+                save_vector(vector, STORAGE_PATH)?;
+            }
+
+            batch.extend(mem_vectors);
+        }
+
+        // P2: Si aun no se alcanzó la cantidad requerida, cargar desde disco.
+        if batch.len() < count {
+            let needed = count - batch.len();
+            let (mut entries, new_offset) = load_vectors(STORAGE_PATH, self.current_offset, needed, None)?;
+            self.current_offset = new_offset;
+            batch.append(&mut entries);
+        }
+
+        Ok(batch)
     }
 
     pub fn get_max_id(&self) -> u64 {
