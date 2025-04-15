@@ -155,7 +155,7 @@ Fuerza el "flush" manual de la memtable del VFSManager, escribiendo los datos en
 
 No requiere cuerpo JSON.
 
-**Respuesta:**
+* **Respuesta:**
   - 200 OK: En caso de éxito: ```{"status": "success", "message": "Memtable flushed to disk"}```
   - 500 Internal Server Error: Si ocurre un error al realizar el flush: ```{"status": "error","error": "<mensaje de error>","error_type": "memtable_error" }```
   - 400 Bad Request: Si el VFSManager no ha sido inicializado: ```{"error": "VFSManager is not initialized"}```
