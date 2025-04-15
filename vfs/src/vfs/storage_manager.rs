@@ -3,13 +3,15 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader,  Read, Write};
 use bincode;
 use super::vector::{VFSVector}; // Asegúrate de importar correctamente
-use super::serializer::{save_vector, load_vectors}; // Tus funciones personalizadas
+use super::serializer::{save_vector, load_vectors}; // Funciones de acceso a disco
+use super::err::VFSError;
 use std::simd::{SupportedLaneCount, LaneCount};
 use core::simd::Simd;
 use serde::{Serialize, Deserialize};
 
-const FLUSH_THRESHOLD: usize = 1000;
+const FLUSH_THRESHOLD: usize = 10; // Número de vectores que se pueden almacenar en memoria antes de flushear la memtable.
 const STORAGE_PATH: &str = "data/vectors.dat";
+const VFS_STATE_PATH: &str =  "state/vfs_state.bin";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct VFSState{
@@ -100,10 +102,10 @@ impl VFSManager {
         Ok(())  
     }
 
-    fn next_id(&mut self) -> u64 {
+    fn next_id(&mut self) -> Result<u64, VFSError> {
         let aux = self.next_id;
         self.next_id += 1;
-        aux
+        Ok(aux)
     }
 
     pub fn get_current_offset(&self) -> usize{
@@ -112,15 +114,16 @@ impl VFSManager {
     }
   
 
-    pub fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {
+    fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {
         for (_, vector) in self.memtable.drain() {
             save_vector(&vector, STORAGE_PATH)?;
         }
         Ok(())
     }
 
-    pub fn flush_manual(&mut self) -> std::io::Result<()> {
-        self.flush_memtable_to_disk()
+    pub fn flush_manual(&mut self) -> Result<(), VFSError> {
+        self.flush_memtable_to_disk().map_err(|e| VFSError::MemtableError(e.to_string()))?;
+        Ok(())
     }
 
     pub fn load_batch(&mut self, count: usize) -> std::io::Result<Vec<VFSVector>> {
@@ -128,6 +131,10 @@ impl VFSManager {
   
         self.current_offset = new_offset;
         Ok(entries)
+    }
+
+    pub fn get_max_id(&self) -> u64 {
+        self.next_id - 1
     }
 
 
@@ -196,26 +203,35 @@ impl VFSManager {
         self.next_id as usize - 1
     }
 
-    fn vector_to_memtable(&mut self, vector: VFSVector) -> std::io::Result<()>{
+    fn vector_to_memtable(&mut self, vector: VFSVector) -> Result<(), VFSError>{
         let id = vector.id();
         self.memtable.insert(id, vector);
 
         if self.memtable.len() >= FLUSH_THRESHOLD {
-            self.flush_memtable_to_disk().expect("Fallo al flushear vectores");
+            self.flush_memtable_to_disk().map_err(|e| VFSError::MemtableError(e.to_string()))?;
         }
         Ok(())
     }
 
     // Registra un vector desde Vec
-    pub fn register_vector_from_vec(&mut self, data: Vec<f32>, name: &str, tags: Vec<String>) -> u64 {
+    pub fn register_vector_from_vec(&mut self, data: Vec<f32>, name: &str, tags: Vec<String>) -> Result<u64, VFSError> {
+        // Validar datos de entrada
+        if data.is_empty() {
+            return Err(VFSError::InvalidVector("Vector data cannot be empty".to_string()));
+        }
+
+        // Generar un nuevo ID
+        let id = self.next_id().map_err(|e| VFSError::IdGenerationError(e.to_string()))?;
+
+        // Crear el vector VFS
+        let vfs = VFSVector::from_vec(data, id, name, tags);
         
-            let id = self.next_id();
-            let vfs = VFSVector::from_vec(data, id, name, tags);
-            self.vector_to_memtable(vfs).expect("Error guardando el vector en la Memtable");
+        // Guardarlo en la memtable
+        self.vector_to_memtable(vfs).map_err(|e| VFSError::MemtableError(format!("Error saving vector to memtable: {}", e)))?;
             println!("VFSVector registrado correctamente !!!");
         
         
-        id
+        Ok(id)
     }
 
     // Registra un vector desde Simd
@@ -226,25 +242,31 @@ impl VFSManager {
         tags: Vec<String>,
         quantize: bool,
         scale_factor: Option<f32>
-    ) -> u64
+    ) -> Result<u64, VFSError>
     where
         LaneCount<N>: SupportedLaneCount,
         {
             
         
-            let id = self.next_id();
-            let vfs = VFSVector::from_simd(data, id, name, tags, quantize, scale_factor);
-            self.vector_to_memtable(vfs).expect("Error guardando el vector en la Memtable");
+        // Generar un nuevo ID
+        let id = self.next_id().map_err(|e| VFSError::IdGenerationError(e.to_string()))?;
+
+        // Crear el vector VFS
+        let vfs = VFSVector::from_simd(data, id, name, tags, quantize, scale_factor);
+
+        // Guardarlo en la memtable
+        self.vector_to_memtable(vfs)
+        .map_err(|e| VFSError::MemtableError(format!("Error saving vector to memtable: {}", e)))?;
             println!("VFSVector registrado correctamente !!!");
         
        
-        id
+        Ok(id)
     }
 
-    pub fn save_state(&mut self, path: &str) -> io::Result<()> {
-
+    pub fn save_state(&mut self, path: Option<&'static str>) -> Result<(), VFSError> {
+        let fpath = path.unwrap_or(VFS_STATE_PATH);
         // Crear el directorio si no existe
-        if let Some(parent) = std::path::Path::new(path).parent() {
+        if let Some(parent) = std::path::Path::new(fpath).parent() {
             std::fs::create_dir_all(parent)?;
         }
 
@@ -255,7 +277,7 @@ impl VFSManager {
         };
 
         let encoded: Vec<u8> = bincode::serialize(&state)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(|e| VFSError::SerializationError(e.to_string()))?;
 
 
         // Abrimos el archivo
@@ -263,33 +285,34 @@ impl VFSManager {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path) 
+            .open(fpath)
         {
             Ok(mut file) => {
-                println!("Archivo abierto correctamente: {}", path);
+                println!("Archivo abierto correctamente: {}", fpath);
                 file.write_all(&encoded)?;
             },
             Err(e) => {
-                println!("Error al abrir el archivo '{}': {:?}", path, e);
-                return Err(e);
+                println!("Error al abrir el archivo '{}': {:?}", fpath, e);
+                return Err(VFSError::IoError(e));
             }
         }
 
         
 
         // Guardar la memtable
-        self.flush_memtable_to_disk().expect("Fallo al flushear vectores");
+        self.flush_memtable_to_disk().map_err(|e| VFSError::MemtableError(e.to_string()))?;
 
         Ok(())
     }
 
-    pub fn load_state(&mut self, path: &str) -> io::Result<()> {
-        let mut file = File::open(path)?;
+    pub fn load_state(&mut self, path: Option<&'static str>) -> Result<(), VFSError> {
+        let fpath = path.unwrap_or(VFS_STATE_PATH);
+        let mut file = File::open(fpath)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
         let state: VFSState = bincode::deserialize(&buffer)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(|e| VFSError::SerializationError(e.to_string()))?;
 
         self.next_id = state.next_id;
         self.name = state.name;

@@ -76,13 +76,14 @@ pub enum DistanceMethod {
 pub struct Ranker {
     search_type: SearchType,
     distance_method: DistanceMethod,
+    ef_search: usize
  //   manager: &'a mut VFSManager
 }
 
 impl Ranker {
     /// Constructor para crear una nueva instancia de `Ranker` con el tipo de búsqueda especificado.
-    pub fn new(search_type: SearchType, distance_method: DistanceMethod) -> Self {
-        Ranker{ search_type,  distance_method}
+    pub fn new(search_type: SearchType, distance_method: DistanceMethod, ef_search: Option<usize>) -> Self {
+        Ranker{ search_type,  distance_method, ef_search: ef_search.unwrap_or(6)}
     }
 
     /// Método para realizar la búsqueda basada en el tipo especificado.
@@ -254,7 +255,7 @@ impl Ranker {
 
         // Paso 1: Cargar todos los vectores en memoria  por lotes para construir el índice
         
-        let ef_construction = 6;
+        let ef_construction = self.ef_search;
        
 
         // Variable para almacenar todos los resultados de las búsquedas en diferentes lotes
