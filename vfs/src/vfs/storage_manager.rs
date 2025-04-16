@@ -198,8 +198,9 @@ impl VFSManager {
 
         // Paso 2. Comprobamos el índice para no tener que hacer una lectura secuencial.
         if let Some(offset) = self.index_map.get(&id) {
-            println!("Vector encontrado en el índice!");
+            println!("Buscando un único vector en offset {}", offset);
             let vector = self.load_vector_at_offset(*offset).ok()?;
+            println!("Vector encontrado en el índice!");
             return Some(vector);
         }
         
