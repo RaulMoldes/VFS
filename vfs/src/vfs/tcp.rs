@@ -386,6 +386,8 @@ fn search(req: SearchRequest, state: &Arc<Mutex<Option<ServerState>>>) -> (u16, 
     let distance_method = match req.distance_method.as_deref() {
         Some("cosine") => DistanceMethod::Cosine,
         Some("euclidean") => DistanceMethod::Euclidean,
+        Some("simd_cosine") => DistanceMethod::SimdCosine,
+        Some("simd_euclidean") => DistanceMethod::SimdEuclidean,
         _ => DistanceMethod::Euclidean,
     };
     

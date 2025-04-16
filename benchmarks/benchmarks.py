@@ -47,13 +47,13 @@ def insert_vectors(n):
 
     return inserted_ids
 
-def search(query_vector, search_type):
+def search(query_vector, search_type, distance_method = "euclidean"):
     payload = {
         "values": query_vector,
-        "top_k": 3,
-        "ef_search": 6,
+        "top_k": 5,
+        "ef_search": 400,
         "search_type": search_type,
-        "distance_method": "euclidean"
+        "distance_method": distance_method
     }
     start = time.time()
     r = requests.post(f"{BASE_URL}/search", json=payload)
@@ -100,6 +100,27 @@ def run_benchmark_search(count, n):
     return (time_exact, time_approx)
 
 
+def run_benchmark_search_distance(count, n):
+    print(f"\n🚀 Benchmarking con {n} vectores...")
+    
+    insert_vectors(count)
+    query = generate_random_vector()
+
+    time_normal = search(query, "exact", "euclidean")
+    time_simd = search(query, "exact", "simd_euclidean")
+
+    time_normal_approximate = search(query, "approximate", "euclidean")
+    time_simd_approximate = search(query, "approximate", "simd_euclidean")
+
+    print(f"  🔎 Tiempo exacto (euclidea): {time_normal:.2f} ms")
+    print(f"  🔍 Tiempo exacto (simd): {time_simd:.2f} ms")
+
+    print(f"  🔎 Tiempo aproximado (euclidea): {time_normal_approximate:.2f} ms")
+    print(f"  🔍 Tiempo aproximado (simd): {time_simd_approximate:.2f} ms")
+
+    return (time_normal, time_simd, time_normal_approximate, time_simd_approximate)
+
+
 
 def run_benchmark_get(n,num_queries=10):
     print(f"\n🚀 Benchmarking GET /vectors/<id> con {n} vectores insertados...")
@@ -116,6 +137,8 @@ def run_benchmark_get(n,num_queries=10):
     avg_time = sum(times) / len(times)
     print(f"  📈 Tiempo promedio: {avg_time:.2f} ms para {num_queries} consultas")
     return avg_time
+
+
 
 
 ######## PLOTS ########
@@ -150,6 +173,33 @@ def plot_search_results(results):
     plt.grid(axis="y")
     plt.tight_layout()
     plt.savefig("../imgs/search_benchmark_comparison.png")
+    plt.show()
+
+
+def plot_distance_results(results):
+    labels = [str(n) for n in results.keys()]
+    exact_times = [v[0] for v in results.values()]
+    exact_simd_times = [v[1] for v in results.values()]
+    aprox_times = [v[2] for v in results.values()]
+    aprox_simd_times = [v[3] for v in results.values()]
+
+    x = range(len(labels))
+    width = 0.35
+
+    plt.figure(figsize=(10, 6))
+    # Dibujar barras con los nuevos colores
+    plt.bar([i - 2*width/4 for i in x], exact_times, width, label='Exact', color='#FF7F0E')
+    plt.bar([i - width/4 for i in x], exact_simd_times, width, label='Exact (SIMD)', color='#D62728')
+    plt.bar([i + width/4 for i in x], aprox_times, width, label='Approximate', color='#1F77B4')
+    plt.bar([i + 2*width/4 for i in x], aprox_simd_times, width, label='Approximate (SIMD)', color='#2CA02C')
+    plt.xticks(x, labels)
+    plt.ylabel("Tiempo (ms)")
+    plt.xlabel("Número de vectores insertados")
+    plt.title("Comparación de búsqueda: Exacta vs Aproximada con operaciones simd o normales")
+    plt.legend()
+    plt.grid(axis="y")
+    plt.tight_layout()
+    plt.savefig("../imgs/search_benchmark_distance_comparison.png")
     plt.show()
 
 
@@ -196,13 +246,22 @@ def main(benchmark):
     elif benchmark == 'POST':
        times = run_benchmark_post()
        plot_post_results(times)
+
+    elif benchmark == 'DISTANCE':
+        for num_vect, size in zip(insert_sizes, test_sizes):
+            result = run_benchmark_search_distance(num_vect, size)
+            results[size] = result
+
+        print("\n📊 Resultados:", results)
+        plot_distance_results(results)
+
     
     else:
         raise ValueError("Tipo de benchmark no permitido. Los tipos permitidos son GET, POST o SEARCH")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("benchmark",help="Tipo de benchmark a ejecutar: GET, POST o SEARCH")
+    parser.add_argument("benchmark",help="Tipo de benchmark a ejecutar: GET, POST, SEARCH o DISTANCE")
 
     args= parser.parse_args()
     main(args.benchmark)

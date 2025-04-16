@@ -196,61 +196,9 @@ impl Ranker {
         let limit = result_limit.unwrap_or(5);
 
         // Crear la función de distancia según el método de distancia configurado
-        let distance_fn: Box<dyn Fn(&VFSVector, &VFSVector) -> f32> = match self.distance_method {
-            DistanceMethod::Euclidean => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
-                let v1 = vfs1.as_f32_vec();
-                let v2 = vfs2.as_f32_vec();
-                v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f32>()
-                    .sqrt()
-            }),
-            DistanceMethod::Cosine => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
-                let v1 = vfs1.as_f32_vec();
-                let v2 = vfs2.as_f32_vec();
-                let dot: f32 = v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| a * b)
-                    .sum();
-                
-                let norm_1: f32 = v1.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                let norm_2: f32 = v2.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                
-                1.0 - (dot / (norm_1 * norm_2))
-            }),
-            DistanceMethod::SimdEuclidean => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
-                // En este caso, no podemos usar directamente la macro SIMD
-                // porque estamos en un closure, así que usamos la versión no-SIMD
-
-                let v1 = vfs1.as_f32_vec();
-                let v2 = vfs2.as_f32_vec();
-                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia euclídea.");
-                v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f32>()
-                    .sqrt()
-            }),
-            DistanceMethod::SimdCosine => Box::new(|vfs1: &VFSVector, vfs2: &VFSVector| {
-                // Aquí también usamos la versión no-SIMD por la misma razón
-    
-                println!("El cálculo con SIMD no está soportado para la búsqueda aproximada. Usando la distancia coseno.");
-
-                let v1 = vfs1.as_f32_vec();
-                let v2 = vfs2.as_f32_vec();
-
-                let dot: f32 = v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| a * b)
-                    .sum();
-                
-                let norm_1: f32 = v1.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                let norm_2: f32 = v2.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-                
-                1.0 - (dot / (norm_1 * norm_2))
-            }),
-        };
+        let distance_fn: Box<dyn Fn(&VFSVector, &VFSVector) -> f32> = Box::new(|vfs1, vfs2| {
+            self.calculate_distance(vfs1, vfs2)
+        });
     
 
         // Paso 1: Cargar todos los vectores en memoria  por lotes para construir el índice

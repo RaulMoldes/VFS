@@ -49,7 +49,7 @@ Asegúrate de tener instalado en tu equipo local:
 El servidor local de VFS puede iniciarse de forma sencilla por línea de comandos. Desde la carpeta del proyecto ejecutar:
 
 ```bash
-cargo run +nightly <port>
+cargo run +nightly <port> > ../server.log 2>&1 &
 ```
 
 Asegurarse de usar un puerto válido entre  0 y 65535
