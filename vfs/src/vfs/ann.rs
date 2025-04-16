@@ -283,7 +283,7 @@ where
 
 
     /// Realiza una búsqueda en una sola capa.
-    pub fn search_layer<'a>(
+    fn search_layer<'a>(
         &self,
         q: &T, // Valor buscado
         ef: usize, // ef
@@ -331,7 +331,7 @@ where
     /// - Si `ef` es menor que `dest.len()`, `dest` se llenará con `ef` elementos.
     ///
     /// Devuelve un fragmento de los vecinos rellenados.
-    pub fn nearest<'a>(
+    fn nearest<'a>(
         &self,
         q: &T,
         ef: usize,
@@ -429,7 +429,7 @@ where
     }
 
     /// Inserta una nueva característica en HNSW.
-    pub fn insert(&mut self, q: T, searcher: &mut Searcher) -> usize {
+    fn insert(&mut self, q: T, searcher: &mut Searcher) -> usize {
         // Obtener el nivel de la característica.
         let level = self.random_level();
         // Si el nivel no es el más alto, cap = ef_construction
@@ -733,7 +733,7 @@ where
         Box::new(feature_data.clone())  // Asumiendo que existe un constructor así
     }
 
-    pub fn get_searcher(&self) -> Searcher{
+    fn get_searcher(&self) -> Searcher{
         self.searcher.clone()
     }
 

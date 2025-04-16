@@ -187,3 +187,5 @@ No requiere cuerpo JSON.
  - 400 Bad Request: Si el VFSManager no ha sido inicializado: ```{ "error": "VFS Manager not initialized" }```
  - 500 Internal Server Error: Si ocurrió un error al cargar el estado: ```{ "error": "Failed to load state: <mensaje de error>" }```
 
+### Tests:
+Para probar el funcionamiento de la api, ejecutar el archivo `tests.sh`, de
