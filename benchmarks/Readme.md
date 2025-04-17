@@ -47,4 +47,4 @@ python3 -m benchmarks --benchmark [GET | POST | SEARCH]
 
 - **Ejemplo**: En esta imagen se observa que parece haber un pequeño cuello de botella al pasar a 500 vectores, pero luego se estabiliza, gracias a la indexación.
 
-![Resultado de GET](../imgs/qantized/get_benchmark.png)
+![Resultado de GET](../imgs/quantized/get_benchmark.png)
