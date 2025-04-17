@@ -1,5 +1,5 @@
    Compiling vfs v0.1.0 (/mnt/c/Users/raul.moldes/OneDrive - MacroScope SL/Escritorio/VFS/vfs)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.53s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.00s
      Running `target/debug/vfs +nightly 9001`
 ╔══════════════════════════════════════════════════════╗
 ║                                                      ║
@@ -23,17 +23,17 @@ He obtenido el lock
 Archivo de datos truncado en: data/vectors.dat
 VFSVector registrado correctamente !!!
 Vector encontrado en memtable con ID: 1
-Bytes a leer: 143
+Bytes a leer: 162
 Marca de inicio de vector encontrada!
-Tamaño del vector: 131
+Tamaño del vector: 150
 Hay suficientes bytes para leer el vector en el buffer
 Bytes a leer: 0
 Final del archivo alcanzado. No hay más vectores a leer
 Búsqueda aproximada completada: encontrados 1 resultados
 Buscando un único vector en offset 0
-Bytes a leer: 143
+Bytes a leer: 162
 Marca de inicio de vector encontrada!
-Tamaño del vector: 131
+Tamaño del vector: 150
 Hay suficientes bytes para leer el vector en el buffer
 Vector encontrado en el índice!
 Archivo abierto correctamente: state/vfs_state.bin

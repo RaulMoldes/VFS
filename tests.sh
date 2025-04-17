@@ -73,7 +73,8 @@ function test_endpoint() {
 test_endpoint POST "/init" '{
   "vector_dimension": 4,
   "storage_name": "my_vfs",
-  "truncate_data": true
+  "truncate_data": true,
+  "quantize": true
 }' 200 "1. Inicializando VFSManager" $SERVER_PID
 
 # 2. Insertar vector válido

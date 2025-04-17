@@ -21,6 +21,7 @@ struct VFSState{
     next_id: u64,
     current_offset: usize,
     index_map: BTreeMap<u64, usize>,
+    quantize: bool
 
 }
 
@@ -35,6 +36,7 @@ pub struct ResetOptions {
     pub clear_indexmap: bool,
     pub reset_id_counter: bool,
     pub new_id_start: Option<u64>,
+    pub reset_quantize: bool
 }
 
 // Implementación con valores predeterminados
@@ -48,7 +50,8 @@ impl Default for ResetOptions {
             clear_memtable: false,
             clear_indexmap: false,
             reset_id_counter: false,
-            new_id_start: None
+            new_id_start: None,
+            reset_quantize: false,
         }
     }
 }
@@ -60,10 +63,11 @@ pub struct VFSManager {
     next_id: u64,
     memtable: IndexMap<u64, VFSVector>, /// Uso indexmap en vez de hashmap por que respeta el orden y unicidad. Funciona mejor
     current_offset: usize,
+    quantize: bool // Si hay que cuantizar o no
 }
 
 impl VFSManager {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, quantize: Option<bool>) -> Self {
 
         
         VFSManager {
@@ -72,6 +76,7 @@ impl VFSManager {
             next_id: 1,
             memtable: IndexMap::new(),
             current_offset: 0,
+            quantize: quantize.unwrap_or(false)
         }
     }
 
@@ -108,6 +113,10 @@ impl VFSManager {
         if options.reset_id_counter {
             self.next_id = options.new_id_start.unwrap_or(1);
         }
+
+        if options.reset_quantize {
+            self.quantize = false
+        }
     
         
         
@@ -127,10 +136,22 @@ impl VFSManager {
     }
   
 
-    fn flush_memtable_to_disk(&mut self) -> std::io::Result<()> {
-        for (id, vector) in self.memtable.drain(..) {
-            let offset = save_vector(&vector, STORAGE_PATH)?;
-            self.index_map.insert(id, offset); // Indexar los vectores 
+    fn flush_memtable_to_disk(&mut self) -> Result<(), VFSError> {
+        for (id, mut vector) in self.memtable.drain(..) {
+            let mut offset = 0;
+            
+            if self.quantize {
+                offset = match vector.quantize() {
+                    Ok(quantized) => save_vector(&quantized, STORAGE_PATH).map_err(VFSError::IoError)?,
+                    Err(e) => return Err(VFSError::InvalidVector(format!("Error: {}", e))),
+                };
+                
+                
+            } else {
+                offset = save_vector(&vector, STORAGE_PATH).map_err(VFSError::IoError)?;
+            }
+        
+            self.index_map.insert(id, offset); // Indexar los vectores
         }
         Ok(())
     }
@@ -142,30 +163,52 @@ impl VFSManager {
 
     
 
-    pub fn load_batch(&mut self, count: usize) -> std::io::Result<Vec<VFSVector>> {
+    pub fn load_batch(&mut self, count: usize) -> Result<Vec<VFSVector>, VFSError> {
         let mut batch: Vec<VFSVector> = Vec::new();
         // P1: Extraer de la memtable solo la cantidad de vectores requerida si es posible
         if !self.memtable.is_empty() {
             // Calcular cuántos elementos vamos a extraer: el mínimo entre el count solicitado y la cantidad en memtable.
             let to_extract = count.min(self.memtable.len());
+            
         
-            // Extraer esos elementos sin vaciar toda la memtable.
-            // Esto depende del tipo de colección que uses. Si es un Vec, podrías hacer:
-            let mem_vectors: Vec<VFSVector> = self.memtable.drain(..to_extract).map(|(_, v)| v).collect();
-
-            // Hacer flush de estos vectores a disco. Se deben guardar a disco ya que si estaban en la memtable significa que no han sido flusheados
-            for vector in &mem_vectors {
-                let offset = save_vector(&vector, STORAGE_PATH)?;
-                self.index_map.insert(vector.id(), offset);
+            for (id, vector) in self.memtable.drain(..to_extract) {
+                let mut offset = 0;
+                // Esto no es lo más eficiente pero me ocurre lo mismo que en el otro iterador
+                let original = vector.clone();
+            
+                if self.quantize {
+                    
+                    offset = match vector.quantize() { // Vector se consume aquí
+                        Ok(quantized) => save_vector(&quantized, STORAGE_PATH)?,
+                        Err(e) => return Err(e),
+                    };
+                    
+                } else {
+                    offset = save_vector(&vector, STORAGE_PATH)?;
+                }
+            
+                self.index_map.insert(id, offset);
+                batch.push(original); // guardamos el vector en la lista.
             }
 
-            batch.extend(mem_vectors);
+            
         }
 
         // P2: Si aun no se alcanzó la cantidad requerida, cargar desde disco.
         if batch.len() < count {
             let needed = count - batch.len();
             let (mut entries, new_offset) = load_vectors(STORAGE_PATH, self.current_offset, needed, None)?;
+
+            if self.quantize {
+                for i in 0..entries.len() {
+                    // Tomamos ownership temporalmente
+                    // El sistema de tipos de rust hace que sea complicado realizar las modificaciones in-place, 
+                    // Esta opción es la más elegante que he sabido implementar.
+                    // Como dequantize destruye el vector antiguo puedo hacer esto.
+                    entries[i] = entries[i].dequantize()?;
+                }
+            } 
+           
             self.current_offset = new_offset;
             batch.append(&mut entries);
         }
@@ -333,6 +376,7 @@ impl VFSManager {
             name: self.name.clone(),
             current_offset: self.current_offset,
             index_map: self.index_map.clone(),
+            quantize: self.quantize,
             
         };
 
@@ -378,6 +422,7 @@ impl VFSManager {
         self.name = state.name;
         self.index_map = state.index_map;
         self.current_offset = state.current_offset;
+        self.quantize = state.quantize;
         Ok(())
     }
 }

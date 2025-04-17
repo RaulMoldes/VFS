@@ -4,7 +4,8 @@
 curl -X POST http://127.0.0.1:9001/init      -H "Content-Type: application/json"      -d '{
            "vector_dimension": 4,
            "storage_name": "my_vfs",
-           "truncate_data": true
+           "truncate_data": true,
+           "quantize":treu,
          }'
 ```
 

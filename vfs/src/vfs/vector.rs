@@ -5,6 +5,8 @@ use std::simd::{SupportedLaneCount, LaneCount};
 use std::convert::TryInto;
 use chrono::{DateTime, Utc};
 
+use super::err::VFSError;
+
 // Metadatos del vector
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VectorMetadata {
@@ -173,7 +175,34 @@ impl VFSVector {
         }
     }
 
-    
+
+    // Implementación para borrar el vector actual al cuantizarlo.
+    // Más eficiente en uso de memoria y caché.
+    pub fn quantize(&self) -> Result<Self, VFSError> {
+        match self {
+            VFSVector::Quantized(_) => {
+                Err(VFSError::InvalidVector("No se puede cuantizar un vector que ya está cuantizado".to_string()))
+            },
+            VFSVector::Dense(data) => {
+                // Usamos la función quantize() que ya existe en el tipo Vector
+                let quantized_data = data.clone().quantize(Some(127.0));
+                Ok(VFSVector::Quantized(quantized_data))
+            }
+        }
+    }
+
+    pub fn dequantize(&self) -> Result<Self, VFSError> {
+        match self {
+            VFSVector::Dense(_) => {
+                Err(VFSError::InvalidVector("No se puede descuantizar un vector que ya está descuantizado".to_string()))
+            },
+            VFSVector::Quantized(data) => {
+                // Usamos la función quantize() que ya existe en el tipo Vector
+                let dequantized_data = data.clone().dequantize();
+                Ok(VFSVector::Dense(dequantized_data))
+            }
+        }
+    }
 
     // Constructor a partir de un vector de f32
     pub fn from_vec(vector: Vec<f32>, id: u64, name: &str, tags: Vec<String>) -> Self {

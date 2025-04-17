@@ -73,7 +73,8 @@ Inicializa el estado global del servidor. Este endpoint configura el VFSManager 
 {
   "vector_dimension": 4,
   "storage_name": "my_vfs",       // Opcional: nombre del almacenamiento. Si no se proporciona, se usa "default_vfs".
-  "truncate_data": true           // Booleano que indica si se debe truncar el archivo de datos.
+  "truncate_data": true ,          // Booleano que indica si se debe truncar el archivo de datos.
+  "quantize": true //  Flag para usar (o no) vectores cuantizados (i8) en lugar de vectores normales. Normalmente los vectores cuantizados son más eficientes.
 }
 ```
 

@@ -28,6 +28,7 @@ struct InitRequest {
     vector_dimension: usize,
     storage_name: Option<String>, // opcional
     truncate_data: bool,
+    quantize: bool
 }
 
 #[derive(Deserialize)]
@@ -273,7 +274,7 @@ fn init_manager(req: InitRequest, state: &Arc<Mutex<Option<ServerState>>>) -> (u
         return (400, json!({"error": "VFSManager is already initialized"}).to_string());
     }
 
-    let mut manager = VFSManager::new(&req.storage_name.unwrap_or_else(|| "default_vfs".into()));
+    let mut manager = VFSManager::new(&req.storage_name.unwrap_or_else(|| "default_vfs".into()),  Some(req.quantize));
 
     let reset_options = ResetOptions {
         truncate_data_file: req.truncate_data,
@@ -284,6 +285,7 @@ fn init_manager(req: InitRequest, state: &Arc<Mutex<Option<ServerState>>>) -> (u
         clear_indexmap: true,
         reset_id_counter: true,
         new_id_start: Some(1),
+        reset_quantize: false
     };
 
     manager.reset_state(reset_options);
