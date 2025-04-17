@@ -26,7 +26,7 @@ python3 -m benchmarks --benchmark [GET | POST | SEARCH]
 
 - **Ejemplo**: Como se ve en la imagen, cada 10 vectores hay un pico de latencia, esto se debe a que los primeros 10 vectores se almacenan en la memtable, pero debido a la configuración de VFSManager, se hace un flush a disco en el vector 10 para evitar llenar la memoria.
 
-![Resultado de POST](../imgs/benchmark_post_vectors.png)
+![Resultado de POST](../imgs/quantized/post_benchmark.png)
 
 
 2. **SEARCH** → Búsqueda exacta vs aproximada
@@ -37,7 +37,7 @@ python3 -m benchmarks --benchmark [GET | POST | SEARCH]
 
 - **Ejemplo**: La búsqueda exacta tiene una mayor latencia al inicio, pero para un número grande de vectores es más eficiente que la búsqueda aproximada. Puede deberse a utilizar un valor pequeño del parámetro `ef_construction` y al procesamiento por lotes implementado.
 
-![Resultado de SEARCH](../imgs/search_benchmark_comparison.png)
+![Resultado de SEARCH](../imgs/quantized/search_benchmark.png)
 
 3. **GET** → Acceso por identificador
 
@@ -47,4 +47,4 @@ python3 -m benchmarks --benchmark [GET | POST | SEARCH]
 
 - **Ejemplo**: En esta imagen se observa que parece haber un pequeño cuello de botella al pasar a 500 vectores, pero luego se estabiliza, gracias a la indexación.
 
-![Resultado de GET](../imgs/get_vector_by_id_benchmark.png)
+![Resultado de GET](../imgs/qantized/get_benchmark.png)
